@@ -20,7 +20,7 @@ Petsciishop is our attempt to take the best ideas from across the C64 community,
 - **Inspector tool** — hover over any cell to read its character and color; click to pick it up as your active drawing settings
 - **Per-screen palette support** — 9 industry-standard C64 palettes (Colodore, Pepto PAL/NTSC, VICE, and more), assignable per screen
 - **ECM (Extended Color Mode)** — full support with 2×2 background grid in the character picker
-- **SDD import/export** — full support for the [CBM prg Studio Screen Designer](https://www.c64-wiki.com/wiki/Screen_Designer_(CBM_prg_Studio)) file format, ensuring interoperability with the broader C64 toolchain
+- **SDD import/export** — full support for the [SDD (Screen Designer Data)](https://www.c64-wiki.com/wiki/Screen_Designer_(CBM_prg_Studio)) file format, ensuring interoperability with the broader C64 toolchain
 - **Multi-screen workspace** — work on multiple screens, export individually or together
 - **CRT display filters** — scanlines, color TV, and B&W TV effects
 - **Drag & drop** — drop `.petmate` files directly into the editor

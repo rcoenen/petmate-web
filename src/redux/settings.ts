@@ -32,7 +32,7 @@ const initialState: RSettings = {
   crtFilter: 'none' as CrtFilter
 }
 
-const SETTINGS_KEY = 'petmate-settings';
+const SETTINGS_KEY = 'petsciishop-settings';
 
 function saveSettings(settings: RSettings) {
   try {

@@ -15,7 +15,7 @@ import {
 } from '../utils/importers/imageConverter';
 import styles from './ImageConverterModal.module.css';
 
-const STORAGE_KEY = 'petmate-image-converter-settings';
+const STORAGE_KEY = 'petsciishop-image-converter-settings';
 
 function loadSettings(): ConverterSettings {
   try {

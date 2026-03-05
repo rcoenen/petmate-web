@@ -44,9 +44,9 @@ const exporters: MenuItemDef[] = [
 
 const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
   {
-    label: 'PetMate',
+    label: 'Petsciishop',
     items: [
-      { label: 'About PetMate', cmd: 'about' },
+      { label: 'About Petsciishop', cmd: 'about' },
       { separator: true },
       { label: 'Preferences', cmd: 'preferences', accelerator: 'Ctrl+P' },
     ],
@@ -89,8 +89,8 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
   {
     label: 'Help',
     items: [
-      { label: 'Documentation', href: 'https://nurpax.github.io/petmate/' },
-      { label: 'Search Issues',  href: 'https://github.com/nurpax/petmate/issues' },
+      { label: 'GitHub',         href: 'https://github.com/rcoenen/Petscii-shop' },
+      { label: 'Search Issues',  href: 'https://github.com/rcoenen/Petscii-shop/issues' },
     ],
   },
 ];

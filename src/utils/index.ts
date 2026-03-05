@@ -296,7 +296,7 @@ export function chunkArray<T>(myArray: T[], chunk_size: number){
 
 export function setWorkspaceFilenameWithTitle(setWorkspaceFilename: (fname: string) => void, filename: string) {
   setWorkspaceFilename(filename)
-  setTitle(`Petmate - ${filename}`)
+  setTitle(`Petsciishop - ${filename}`)
 }
 
 type StoreDispatch = any;
@@ -367,7 +367,7 @@ export async function dialogImportFile(type: FileFormat, importFile: (fbs: Frame
   }
 }
 
-const SETTINGS_KEY = 'petmate-settings';
+const SETTINGS_KEY = 'petsciishop-settings';
 
 export function loadSettings(dispatchSettingsLoad: (json: Settings) => void) {
   try {

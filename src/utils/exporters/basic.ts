@@ -14,7 +14,7 @@ const initCode = ({
   borderColor,
   backgroundColor,
   charsetBits
-}: InitCodeParams) => `10 rem created with petmate
+}: InitCodeParams) => `10 rem created with petsciishop
 20 poke 53280,${borderColor}
 30 poke 53281,${backgroundColor}
 40 poke 53272,${charsetBits}

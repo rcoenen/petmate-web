@@ -3,7 +3,7 @@ import * as selectors from '../redux/selectors';
 import * as screensSelectors from '../redux/screensSelectors';
 import { RootState } from '../redux/types';
 
-const AUTO_SAVE_KEY = 'petmate-autosave';
+const AUTO_SAVE_KEY = 'petsciishop-autosave';
 const AUTO_SAVE_INTERVAL_MS = 60_000;
 
 export function startAutoSave(getState: () => RootState): () => void {

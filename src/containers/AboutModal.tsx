@@ -4,6 +4,7 @@ import { Toolbar } from '../redux/toolbar';
 import { RootState } from '../redux/types';
 import Modal from '../components/Modal';
 import styles from './AboutModal.module.css';
+import buildInfo from '../../build.json';
 
 interface Props {
   show: boolean;
@@ -40,6 +41,7 @@ function AboutModal({ show, onClose }: Props) {
             Documentation
           </a>
         </div>
+        <p className={styles.buildNum}>Build {buildInfo.build}</p>
         <button className={styles.closeBtn} onClick={onClose}>Close</button>
       </div>
     </Modal>

@@ -48,6 +48,12 @@
   color: #555;
 }
 
+.buildNum {
+  margin: 0;
+  font-size: 11px;
+  color: #555;
+}
+
 .closeBtn {
   align-self: flex-end;
   margin: 4px 0 0;

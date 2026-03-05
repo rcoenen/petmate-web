@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 (2025-03)
+## 1.0.0 (2026-03)
 
 First release of PetMate Online — a browser-based C64 PETSCII editor rebuilt from [Petmate](https://github.com/nurpax/petmate) by Janne Hellsten.
 
@@ -45,7 +45,7 @@ First release of PetMate Online — a browser-based C64 PETSCII editor rebuilt f
 - PET (.pet)
 - Screen Designer (.sdd)
 
-## 1.1.0 (2025-03)
+## 1.1.0 (2026-03)
 
 ### Added
 

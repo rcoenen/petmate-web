@@ -21,6 +21,7 @@ import * as settings from './settings'
 import * as workspace from './workspace'
 import * as screensSelectors from '../redux/screensSelectors'
 import { Toolbar } from './toolbar'
+import { showConfirm } from '../utils/dialog'
 import {
   dialogLoadWorkspace,
   dialogSaveAsWorkspace,
@@ -87,7 +88,14 @@ export const actions = {
 
   // Same as openWorkspace but pop a dialog asking for the filename
   fileOpenWorkspace: (): RootStateThunk => {
-    return (dispatch, _getState) => {
+    return async (dispatch, getState) => {
+      if (selectors.anyUnsavedChanges(getState())) {
+        const proceed = await showConfirm(
+          'You have unsaved changes. Open a new file anyway?',
+          { okLabel: 'Open', cancelLabel: 'Cancel' }
+        );
+        if (!proceed) return;
+      }
       dialogLoadWorkspace(dispatch);
     }
   },

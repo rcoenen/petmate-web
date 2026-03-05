@@ -2,7 +2,20 @@
 import React, { Component, PureComponent, useState, useCallback, CSSProperties } from 'react';
 import { connect } from 'react-redux'
 import { bindActionCreators } from 'redux'
-import { SortableContainer, SortableElement, arrayMove } from '../external/react-sortable-hoc'
+import {
+  DndContext,
+  DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 import classnames from 'classnames'
 
@@ -166,8 +179,6 @@ class NameEditor extends Component<NameEditorProps, NameEditorState> {
 function computeContainerSize(fb: Framebuf, maxHeight: number) {
   const pixWidth = fb.width * 8;
   const pixHeight = fb.height * 8;
-  // TODO if height is bigger than maxHeight, need to scale differently
-  // to fit the box.
   const s = maxHeight / pixHeight;
   return {
     divWidth: pixWidth * s,
@@ -296,17 +307,21 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
   }
 }
 
-const SortableFramebufTab = SortableElement((props: FramebufTabProps) =>
-  <FramebufTab {...props} />
-)
-
-const SortableTabList = SortableContainer((props: {children: any}) => {
+function SortableFramebufTab(props: FramebufTabProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.framebufId,
+  });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
   return (
-    <div className={styles.tabs}>
-      {props.children}
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <FramebufTab {...props} />
     </div>
-  )
-})
+  );
+}
 
 type ScreenDimsProps = {
   dims: {
@@ -403,8 +418,6 @@ function NewTabButton (props: {
   onClick: () => void,
   Toolbar: toolbar.PropsFromDispatch
 }) {
-  // onClick is not in FontAwesomeIcon props and don't know how to pass
-  // it otherwise.
   const typingWorkaround = { onClick: props.onClick };
   return (
     <div className={classnames(styles.tab, styles.newScreen)}>
@@ -433,72 +446,75 @@ interface FramebufferTabsProps {
   setFramebufName: (name: string, framebufIndex: number) => void;
 }
 
-class FramebufferTabs_ extends Component<FramebufferTabsProps & FramebufferTabsDispatch> {
-  handleActiveClick = (idx: number) => {
-    this.props.Screens.setCurrentScreenIndex(idx)
-  }
+function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
 
-  handleNewTab = () => {
-    this.props.Screens.newScreen()
-    // Context menu eats the ctrl key up event, so force it to false
-    this.props.Toolbar.setCtrlKey(false)
-  }
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = props.screens.indexOf(active.id as number);
+      const newIndex = props.screens.indexOf(over.id as number);
+      props.Screens.setScreenOrder(arrayMove(props.screens, oldIndex, newIndex));
+    }
+  }, [props.screens, props.Screens]);
 
-  handleRemoveTab = (idx: number) => {
-    this.props.Screens.removeScreen(idx)
-    // Context menu eats the ctrl key up event, so force it to false
-    this.props.Toolbar.setCtrlKey(false)
-  }
+  const handleActiveClick = useCallback((idx: number) => {
+    props.Screens.setCurrentScreenIndex(idx);
+  }, [props.Screens]);
 
-  handleDuplicateTab = (idx: number) => {
-    this.props.Screens.cloneScreen(idx)
-    // Context menu eats the ctrl key up event, so force it to false
-    this.props.Toolbar.setCtrlKey(false)
-  }
+  const handleNewTab = useCallback(() => {
+    props.Screens.newScreen();
+    props.Toolbar.setCtrlKey(false);
+  }, [props.Screens, props.Toolbar]);
 
-  onSortEnd = (args: {oldIndex: number, newIndex: number}) => {
-    this.props.Screens.setScreenOrder(arrayMove(this.props.screens, args.oldIndex, args.newIndex))
-  }
+  const handleRemoveTab = useCallback((idx: number) => {
+    props.Screens.removeScreen(idx);
+    props.Toolbar.setCtrlKey(false);
+  }, [props.Screens, props.Toolbar]);
 
-  render () {
-    const lis = this.props.screens.map((framebufId, i) => {
-      const framebuf = this.props.getFramebufByIndex(framebufId)!
-      const { font } = this.props.getFont(framebuf);
-      return (
-        <SortableFramebufTab
-          key={framebufId}
-          index={i}
-          id={i}
-          framebufId={framebufId}
-          onSetActiveTab={this.handleActiveClick}
-          onRemoveTab={this.handleRemoveTab}
-          onDuplicateTab={this.handleDuplicateTab}
-          framebuf={framebuf}
-          active={i === this.props.activeScreen}
-          font={font}
-          colorPalette={this.props.colorPalette}
-          setName={this.props.setFramebufName}
-        />
-      )
-    })
+  const handleDuplicateTab = useCallback((idx: number) => {
+    props.Screens.cloneScreen(idx);
+    props.Toolbar.setCtrlKey(false);
+  }, [props.Screens, props.Toolbar]);
+
+  const lis = props.screens.map((framebufId, i) => {
+    const fb = props.getFramebufByIndex(framebufId)!;
+    const { font } = props.getFont(fb);
     return (
-      <div className={styles.tabHeadings}>
-        <SortableTabList
-          distance={5}
-          axis='x'
-          lockAxis='x'
-          onSortEnd={this.onSortEnd}
-        >
-          {lis}
-          <NewTabButton
-            dims={this.props.newScreenSize}
-            Toolbar={this.props.Toolbar}
-            onClick={this.handleNewTab}
-          />
-        </SortableTabList>
-      </div>
-    )
-  }
+      <SortableFramebufTab
+        key={framebufId}
+        id={i}
+        framebufId={framebufId}
+        onSetActiveTab={handleActiveClick}
+        onRemoveTab={handleRemoveTab}
+        onDuplicateTab={handleDuplicateTab}
+        framebuf={fb}
+        active={i === props.activeScreen}
+        font={font}
+        colorPalette={props.colorPalette}
+        setName={props.setFramebufName}
+      />
+    );
+  });
+
+  return (
+    <div className={styles.tabHeadings}>
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <SortableContext items={props.screens} strategy={horizontalListSortingStrategy}>
+          <div className={styles.tabs}>
+            {lis}
+            <NewTabButton
+              dims={props.newScreenSize}
+              Toolbar={props.Toolbar}
+              onClick={handleNewTab}
+            />
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
 }
 
 export default connect(

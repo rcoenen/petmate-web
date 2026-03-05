@@ -1,5 +1,6 @@
 import { defineConfig, transformWithEsbuild } from 'vite'
 import react from '@vitejs/plugin-react'
+import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [
@@ -23,6 +24,7 @@ export default defineConfig({
     extensions: ['.mts', '.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
     alias: {
       path: 'path-browserify',
+      fs: resolve(__dirname, 'src/utils/stubs/fs.ts'),
     },
   },
   optimizeDeps: {

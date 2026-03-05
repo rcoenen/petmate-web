@@ -398,6 +398,8 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
 
   handlePointerDown = (e: any) => {
     if (this.props.selectedTool === Tool.Inspector) {
+      const { charPos } = this.currentCharPos(e);
+      this.altClick(charPos);
       return;
     }
     if (this.props.selectedTool == Tool.PanZoom ||

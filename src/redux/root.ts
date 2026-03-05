@@ -28,7 +28,6 @@ import {
   dialogImportFile,
   saveWorkspace,
   loadSettings,
-  promptProceedWithUnsavedChanges,
   setWorkspaceFilenameWithTitle
 } from '../utils'
 
@@ -69,23 +68,18 @@ export const actions = {
 
   // Load workspace from parsed JSON data (file reading happens in dialogLoadWorkspace)
   openWorkspace: (data: any, filename?: string): RootStateThunk => {
-    return (dispatch, getState) => {
-      if (promptProceedWithUnsavedChanges(getState(), {
-        title: 'Continue',
-        detail: 'Proceed with loading a Petmate workspace?  This cannot be undone.'
-      })) {
-        try {
-          dispatch(workspace.load(data));
-          if (filename) {
-            setWorkspaceFilenameWithTitle(
-              (fname) => dispatch(Toolbar.actions.setWorkspaceFilename(fname)),
-              filename
-            );
-          }
-        } catch(e) {
-          console.error(e)
-          alert(`Failed to load workspace!`)
+    return (dispatch) => {
+      try {
+        dispatch(workspace.load(data));
+        if (filename) {
+          setWorkspaceFilenameWithTitle(
+            (fname) => dispatch(Toolbar.actions.setWorkspaceFilename(fname)),
+            filename
+          );
         }
+      } catch(e) {
+        console.error(e)
+        alert(`Failed to load workspace!`)
       }
     }
   },

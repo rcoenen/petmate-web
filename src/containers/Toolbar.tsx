@@ -162,21 +162,47 @@ const renderColorizeSubIcon: React.FC<{}> = () => {
   )
 }
 
+const renderDrawSubIcon: React.FC<{}> = () => {
+  return (
+    <>
+      <div style={{
+        position: 'absolute',
+        top: '7px',
+        left: '10px',
+        fontSize: '10px',
+        fontWeight: 'bold',
+        color: '#ccc',
+        lineHeight: 1,
+        pointerEvents: 'none',
+      }}>
+        C
+      </div>
+      <div style={{
+        backgroundColor: '#d77',
+        position: 'absolute',
+        width: '9px',
+        height: '9px',
+        top: '24px',
+        left: '30px',
+        borderRadius: '50%'
+      }} />
+    </>
+  )
+}
+
 const renderCharSubIcon: React.FC<{}> = () => {
   return (
     <div style={{
       position: 'absolute',
-      width: '9px',
-      height: '9px',
-      top: '17px',
-      left: '30px',
+      top: '7px',
+      left: '10px',
+      fontSize: '10px',
+      fontWeight: 'bold',
+      color: '#ccc',
+      lineHeight: 1,
+      pointerEvents: 'none',
     }}>
-      <i
-        className='fas fa-font'
-        style={{
-          fontSize: '10px'
-        }}
-      />
+      C
     </div>
   )
 }
@@ -338,7 +364,8 @@ class ToolbarView extends Component<
       mkTool({
         tool: Tool.Draw,
         iconName: faPencilAlt,
-        tooltip: 'Char & Color'
+        tooltip: 'Char & Color',
+        subIcon: renderDrawSubIcon
       }),
       mkTool({
         tool: Tool.Colorize,

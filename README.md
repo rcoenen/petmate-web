@@ -11,7 +11,7 @@ Petsciishop is a C64 PETSCII graphics editor that runs entirely in your browser 
 ## Features
 
 - **Runs in the browser** — built on Vite with all file I/O using browser APIs (file pickers, downloads, localStorage)
-- **Image-to-PETSCII converter** — File > Convert Image... loads any image and converts it using CIE Lab perceptual color matching, saliency-weighted character optimization, and three C64 palettes (Colodore, Pepto, CCS64). Supports Standard (256 chars) and ECM (64 chars, 4 backgrounds) modes with live side-by-side previews
+- **[Image-to-PETSCII converter](docs/image-converter.md)** — File > Convert Image... loads any image and converts it using CIE Lab perceptual color matching, saliency-weighted character optimization, and three C64 palettes (Colodore, Pepto, CCS64). Supports Standard (256 chars) and ECM (64 chars, 4 backgrounds) modes with live side-by-side previews
 - **SDD import/export** — full Screen Designer Data file support
 - **CRT display filters** — scanlines, color TV, and B&W TV effects
 - **Custom HTML dialogs** — native-feeling modals replacing system dialogs

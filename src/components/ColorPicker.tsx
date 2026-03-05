@@ -12,6 +12,8 @@ interface ColorPickerProps {
   twoRows: boolean;
   /** Optional subset/reorder of color indices to display (e.g. for import bg picker). */
   colorIndices?: number[];
+  /** Highlighted color index from Inspector tool (distinct from selected). */
+  inspectedColorIndex?: number;
 
   onSelectColor: (idx: number) => void;
 }
@@ -36,7 +38,12 @@ export default class ColorPicker extends Component<ColorPickerProps> {
         width: `${blockWidth}px`,
         height: `${blockHeight}px`
       }
-      const cls = this.props.selected === idx ? styles.boxSelected : styles.box
+      const isInspecting = this.props.inspectedColorIndex !== undefined;
+      const isInspected = this.props.inspectedColorIndex === idx;
+      const isSelected = !isInspecting && this.props.selected === idx;
+      const cls = isSelected ? styles.boxSelected
+        : isInspected ? styles.boxInspected
+        : styles.box
       return (
         <div
           key={idx}

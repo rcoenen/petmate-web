@@ -45,6 +45,8 @@ interface CanvasStatusbarProps {
   framebuf: Framebuf;
   isActive: boolean;
   charPos:  Coord2 | null;
+  inspectedScreencode?: number;
+  inspectedColorIndex?: number;
 }
 
 export class CanvasStatusbar extends PureComponent<CanvasStatusbarProps> {
@@ -71,6 +73,16 @@ export class CanvasStatusbar extends PureComponent<CanvasStatusbarProps> {
         <FixedWidthCoord axis='Y' number={cp !== null ? cp.row : null} />
         <FixedWidthCoord axis='C' number={formatScreencode(cc)} numberPixelWidth={60} />
         <FixedWidthCoord axis='Size' number={widthHeight} numberPixelWidth={40} />
+        {this.props.inspectedScreencode !== undefined && (
+          <FixedWidthCoord
+            axis='Char'
+            number={`$${this.props.inspectedScreencode.toString(16).toUpperCase().padStart(2, '0')}`}
+            numberPixelWidth={35}
+          />
+        )}
+        {this.props.inspectedColorIndex !== undefined && (
+          <FixedWidthCoord axis='Color' number={this.props.inspectedColorIndex} numberPixelWidth={20} />
+        )}
         {framebuf.ecmMode && (
           <div style={{color:'var(--main-text-color)', marginLeft: '4px', fontWeight: 'bold'}}>ECM</div>
         )}

@@ -397,6 +397,9 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
   }
 
   handlePointerDown = (e: any) => {
+    if (this.props.selectedTool === Tool.Inspector) {
+      return;
+    }
     if (this.props.selectedTool == Tool.PanZoom ||
       (this.props.selectedTool !== Tool.Text && this.props.spacebarKey)) {
       this.handlePanZoomPointerDown(e);
@@ -652,6 +655,28 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
               brushRegion={this.props.brushRegion}
             />
         }
+      } else if (selectedTool === Tool.Inspector) {
+        const { charPos } = this.state;
+        const row = charPos.row;
+        const col = charPos.col;
+        if (row >= 0 && row < this.props.framebufHeight &&
+            col >= 0 && col < this.props.framebufWidth) {
+          const pix = this.props.framebuf[row][col];
+          screencodeHighlight = pix.code;
+          colorHighlight = pix.color;
+        } else {
+          screencodeHighlight = undefined;
+          colorHighlight = undefined;
+        }
+        highlightCharPos = false;
+        overlays =
+          <CharPosOverlay
+            framebufWidth={this.props.framebufWidth}
+            framebufHeight={this.props.framebufHeight}
+            charPos={this.state.charPos}
+            inspectorPulse={true}
+            color='rgba(0, 255, 255, 0.5)'
+          />
       } else if (
         selectedTool === Tool.Draw ||
         selectedTool === Tool.Colorize ||
@@ -936,7 +961,24 @@ class Editor extends Component<EditorProps & EditorDispatch> {
     const scaleX = 1.8;
     const scaleY = scaleX;
     const fbContainerClass =
-      classNames(styles.fbContainer, this.props.selectedTool == Tool.PanZoom ? styles.panzoom : null);
+      classNames(
+        styles.fbContainer,
+        this.props.selectedTool == Tool.PanZoom ? styles.panzoom : null,
+        this.props.selectedTool === Tool.Inspector ? styles.inspector : null
+      );
+
+    // Inspector: read hovered cell data
+    let inspectedScreencode: number | undefined = undefined;
+    let inspectedColorIndex: number | undefined = undefined;
+    if (this.props.selectedTool === Tool.Inspector && this.state.isActive) {
+      const { row, col } = this.state.charPos;
+      const fb = this.props.framebuf;
+      if (fb && row >= 0 && row < fb.height && col >= 0 && col < fb.width) {
+        const pix = fb.framebuf[row][col];
+        inspectedScreencode = pix.code;
+        inspectedColorIndex = pix.color;
+      }
+    }
     return (
       <div
         className={styles.editorLayoutContainer}
@@ -961,18 +1003,13 @@ class Editor extends Component<EditorProps & EditorDispatch> {
             framebuf={this.props.framebuf}
             isActive={this.state.isActive}
             charPos={this.state.charPos}
+            inspectedScreencode={inspectedScreencode}
+            inspectedColorIndex={inspectedColorIndex}
           />
         </div>
         <div style={{marginLeft: '8px', marginRight: '16px'}}>
           <div style={{marginBottom: '10px'}}>
-            <ColorPicker
-              selected={this.props.textColor}
-              colorPalette={colorPalette}
-              onSelectColor={this.handleSetColor}
-              twoRows={true}
-              scale={{scaleX, scaleY}}
-            />
-            <div style={{marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+            <div style={{marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px'}}>
               <span style={{fontSize: '0.75em', color: 'rgb(160,160,160)'}}>Palette:</span>
               <select
                 value={this.props.paletteId}
@@ -992,8 +1029,16 @@ class Editor extends Component<EditorProps & EditorDispatch> {
                 ))}
               </select>
             </div>
+            <ColorPicker
+              selected={this.props.textColor}
+              colorPalette={colorPalette}
+              onSelectColor={this.handleSetColor}
+              twoRows={true}
+              scale={{scaleX, scaleY}}
+              inspectedColorIndex={inspectedColorIndex}
+            />
           </div>
-          <CharSelect canvasScale={{scaleX, scaleY}}/>
+          <CharSelect canvasScale={{scaleX, scaleY}} inspectedScreencode={inspectedScreencode} inspectedColorIndex={inspectedColorIndex}/>
         </div>
       </div>
     )

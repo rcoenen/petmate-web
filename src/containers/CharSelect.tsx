@@ -3,7 +3,7 @@ import React, { Component, useRef, useCallback, useState, MouseEvent, CSSPropert
 import { connect } from 'react-redux'
 import { Dispatch, bindActionCreators } from 'redux'
 
-import { RootState, Font, Pixel, Coord2, Rgb } from '../redux/types'
+import { RootState, Font, Pixel, Coord2, Rgb, Tool } from '../redux/types'
 import * as framebuffer from '../redux/editor'
 import * as cfonts from '../redux/customFonts'
 
@@ -12,6 +12,7 @@ import { framebufIndexMergeProps } from '../redux/utils'
 
 import CharGrid from '../components/CharGrid'
 import CharPosOverlay from '../components/CharPosOverlay'
+import ColorPicker from '../components/ColorPicker'
 import { CharSelectStatusbar } from '../components/Statusbar'
 
 import * as utils from '../utils'
@@ -21,7 +22,7 @@ import * as screensSelectors from '../redux/screensSelectors'
 import {
   getEffectiveColorPalette
 } from '../redux/settingsSelectors'
-import { ecmScreencode } from '../utils/ecm'
+import { ecmScreencode, ecmBgSelector, ecmCharIndex } from '../utils/ecm'
 
 import FontSelector from '../components/FontSelector'
 
@@ -38,6 +39,9 @@ interface CharSelectProps {
   };
   colorPalette: Rgb[];
   selected: Coord2 | null;
+  inspectedScreencode?: number;
+  inspectedColorIndex?: number;
+  selectedTool: Tool;
   backgroundColor: number;
   textColor: number;
   ecmMode: boolean;
@@ -97,6 +101,7 @@ function CharSelectView(props: {
   };
   colorPalette: Rgb[];
   selected: Coord2;
+  inspectedCharPos?: Coord2 | null;
   backgroundColor: string;
   style: CSSProperties;
 
@@ -178,6 +183,15 @@ function CharSelectView(props: {
               opacity={1.0}
               charPos={props.selected} />
             : null}
+          {props.inspectedCharPos ?
+            <CharPosOverlay
+              framebufWidth={W}
+              framebufHeight={H}
+              grid={true}
+              inspectorPulse={true}
+              outlineWidth={2}
+              charPos={props.inspectedCharPos} />
+            : null}
         </div>
       </div>
 
@@ -201,7 +215,22 @@ function CharSelectView(props: {
   )
 }
 
-class CharSelect extends Component<CharSelectProps, { ecmPage: number }> {
+function buildEcmPageFb(font: Font, textColor: number): Pixel[][] {
+  const ecmChars = font.charOrder.filter(c => c < 64);
+  return fp.mkArray(8, y =>
+    fp.mkArray(8, x => {
+      const idx = y * 8 + x;
+      return { code: idx < ecmChars.length ? ecmChars[idx] : 0, color: textColor };
+    })
+  );
+}
+
+interface CharSelectState {
+  ecmPage: number;
+  activeBgPicker: number | null;  // 0-3 or null
+}
+
+class CharSelect extends Component<CharSelectProps, CharSelectState> {
 
   fb: Pixel[][]|null = null;
   font: Font|null = null;
@@ -209,7 +238,7 @@ class CharSelect extends Component<CharSelectProps, { ecmPage: number }> {
   prevEcmMode = false;
   prevEcmPage = 0;
 
-  state = { ecmPage: 0 };
+  state: CharSelectState = { ecmPage: 0, activeBgPicker: null };
 
   constructor (props: CharSelectProps) {
     super(props)
@@ -244,6 +273,21 @@ class CharSelect extends Component<CharSelectProps, { ecmPage: number }> {
     this.prevEcmMode = ecmMode
     this.prevEcmPage = this.state.ecmPage
     this.font = font
+  }
+
+  handleBgSwatchClick = (page: number) => {
+    this.setState(prev => ({
+      activeBgPicker: prev.activeBgPicker === page ? null : page
+    }));
+  }
+
+  handleBgColorSelect = (page: number, color: number) => {
+    if (page === 0) {
+      this.props.Framebuffer.setBackgroundColor(color);
+    } else {
+      this.props.Framebuffer.setExtBgColor({ index: page as 1|2|3, color });
+    }
+    this.setState({ activeBgPicker: null });
   }
 
   handleClick = (charPos: Coord2 | null) => {
@@ -290,35 +334,166 @@ class CharSelect extends Component<CharSelectProps, { ecmPage: number }> {
 
     const selected = ecmMode ? null : this.props.selected;
 
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {ecmMode && (
+    const isInspector = this.props.selectedTool === Tool.Inspector;
+    const showAllEcmPages = ecmMode;
+
+    // For inspector + ECM: determine which page the inspected char is on
+    let inspectedPage = -1;
+    let inspectedBaseCharPos: Coord2 | null = null;
+    if (showAllEcmPages && this.props.inspectedScreencode !== undefined) {
+      inspectedPage = ecmBgSelector(this.props.inspectedScreencode);
+      const baseChar = ecmCharIndex(this.props.inspectedScreencode);
+      // Find position in 8x8 grid
+      if (this.fb) {
+        for (let y = 0; y < this.fb.length; y++) {
+          for (let x = 0; x < this.fb[y].length; x++) {
+            if (this.fb[y][x].code === baseChar) {
+              inspectedBaseCharPos = { row: y, col: x };
+              break;
+            }
+          }
+          if (inspectedBaseCharPos) break;
+        }
+      }
+    }
+
+    // Normal inspected char pos (non-ECM)
+    const inspectedCharPos = (!ecmMode && this.props.inspectedScreencode !== undefined)
+      ? utils.rowColFromScreencode(this.props.font, this.props.inspectedScreencode)
+      : null;
+
+    if (showAllEcmPages) {
+      const bgColors = [
+        this.props.backgroundColor,
+        this.props.extBgColor1,
+        this.props.extBgColor2,
+        this.props.extBgColor3
+      ];
+      // Use the actual inspected color so the grid matches the canvas
+      const displayColor = this.props.inspectedColorIndex ?? this.props.textColor;
+      const ecmFb = buildEcmPageFb(this.props.font, displayColor);
+      const halfScale = 0.85;
+      const cellW = Math.floor(scaleX * halfScale * 8 * 9);
+      const cellH = Math.floor(scaleY * halfScale * 8 * 9);
+      const handlePageClick = (page: number, e: React.MouseEvent<HTMLDivElement>) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const col = Math.floor((e.clientX - rect.left) / rect.width * 8);
+        const row = Math.floor((e.clientY - rect.top) / rect.height * 8);
+        if (row >= 0 && row < 8 && col >= 0 && col < 8 && ecmFb[row]) {
+          const baseCode = ecmFb[row][col].code;
+          const screencode = ecmScreencode(baseCode, page);
+          const mappedPos = utils.rowColFromScreencode(this.props.font, screencode);
+          this.props.Toolbar.setCurrentChar(mappedPos);
+        }
+      };
+      const renderPage = (page: number) => {
+        const pageBg = utils.colorIndexToCssRgb(colorPalette, bgColors[page]);
+        const pageInspectedPos = page === inspectedPage ? inspectedBaseCharPos : null;
+        return (
+          <div key={page} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '0.6em',
+              color: page === inspectedPage ? 'rgba(0,255,255,0.9)' : 'rgb(120,120,120)',
+              marginBottom: '4px',
+              position: 'relative'
+            }}>
+              <div
+                style={{
+                  width: '16px',
+                  height: '16px',
+                  backgroundColor: pageBg,
+                  border: '1px solid rgba(255,255,255,0.3)',
+                  borderRadius: '1px',
+                  flexShrink: 0,
+                  cursor: 'pointer'
+                }}
+                onClick={() => this.handleBgSwatchClick(page)}
+              />
+              Bg{page}
+              {this.state.activeBgPicker === page && (
+                <div style={{
+                  position: 'absolute',
+                  top: '20px',
+                  left: 0,
+                  zIndex: 10,
+                  filter: 'drop-shadow(2px 2px 2px rgba(0,0,0,0.5))',
+                }}>
+                  <ColorPicker
+                    colorPalette={colorPalette}
+                    selected={bgColors[page]}
+                    onSelectColor={(c: number) => this.handleBgColorSelect(page, c)}
+                    scale={{ scaleX: 1.0, scaleY: 1.0 }}
+                    twoRows={true}
+                  />
+                </div>
+              )}
+            </div>
+            <div style={{ width: cellW, height: cellH, cursor: 'pointer' }}
+              onClick={(e) => handlePageClick(page, e)}
+            >
+              <div style={{
+                imageRendering: 'pixelated' as any,
+                transform: `scale(${scaleX * halfScale}, ${scaleY * halfScale})`,
+                transformOrigin: '0% 0%',
+                width: 8*9,
+                height: 8*9,
+                pointerEvents: 'none',
+              }}>
+                <CharGrid
+                  width={8}
+                  height={8}
+                  backgroundColor={pageBg}
+                  grid={true}
+                  framebuf={ecmFb}
+                  font={this.props.font}
+                  colorPalette={colorPalette}
+                />
+                {pageInspectedPos &&
+                  <CharPosOverlay
+                    framebufWidth={8}
+                    framebufHeight={8}
+                    grid={true}
+                    inspectorPulse={true}
+                    outlineWidth={2}
+                    charPos={pageInspectedPos}
+                  />
+                }
+              </div>
+            </div>
+          </div>
+        );
+      };
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '4px', rowGap: '10px' }}>
+            {renderPage(0)}
+            {renderPage(1)}
+            {renderPage(2)}
+            {renderPage(3)}
+          </div>
           <div style={{
             display: 'flex',
             flexDirection: 'row',
-            marginBottom: '4px',
-            gap: '2px'
+            marginTop:'4px',
+            alignItems:'center',
+            justifyContent: 'space-between'
           }}>
-            {[0, 1, 2, 3].map(page => (
-              <button
-                key={page}
-                onClick={() => this.setState({ ecmPage: page })}
-                style={{
-                  flex: 1,
-                  padding: '2px 4px',
-                  fontSize: '0.7em',
-                  backgroundColor: this.state.ecmPage === page ? 'rgba(255,255,255,0.2)' : 'transparent',
-                  color: this.state.ecmPage === page ? '#fff' : 'rgb(120,120,120)',
-                  border: this.state.ecmPage === page ? '1px solid rgba(255,255,255,0.4)' : '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '3px',
-                  cursor: 'pointer'
-                }}
-              >
-                Bg {page}
-              </button>
-            ))}
+            <CharSelectStatusbar curScreencode={this.props.inspectedScreencode ?? null} />
+            <FontSelector
+              currentCharset={this.props.charset}
+              setCharset={this.props.Framebuffer.setCharset}
+              customFonts={Object.entries(this.props.customFonts).map(([id, { name }]) => ({ id, name }))}
+            />
           </div>
-        )}
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
         <CharSelectView
           canvasScale={this.props.canvasScale}
           backgroundColor={backg}
@@ -329,6 +504,7 @@ class CharSelect extends Component<CharSelectProps, { ecmPage: number }> {
           customFonts={this.props.customFonts}
           colorPalette={colorPalette}
           selected={selected!}
+          inspectedCharPos={inspectedCharPos}
           onCharSelected={this.handleClick}
           setCharset={this.props.Framebuffer.setCharset}
         />
@@ -363,6 +539,7 @@ const mapStateToProps = (state: RootState) => {
     font,
     customFonts: selectors.getCustomFonts(state),
     colorPalette: getEffectiveColorPalette(state, framebufIndex),
+    selectedTool: state.toolbar.selectedTool,
     ecmMode: framebuf?.ecmMode ?? false,
     extBgColor1: framebuf?.extBgColor1 ?? 0,
     extBgColor2: framebuf?.extBgColor2 ?? 0,

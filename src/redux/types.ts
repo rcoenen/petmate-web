@@ -95,7 +95,8 @@ export enum Tool {
   CharDraw = 2,
   Brush = 3,
   Text = 4,
-  PanZoom = 5
+  PanZoom = 5,
+  Inspector = 6
 };
 
 // Per screen UI state

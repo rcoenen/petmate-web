@@ -12,3 +12,7 @@
 .fbContainer.panzoom {
   cursor: grab;
 }
+
+.fbContainer.inspector {
+  cursor: crosshair;
+}

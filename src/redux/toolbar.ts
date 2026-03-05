@@ -295,6 +295,9 @@ export class Toolbar {
             } else if (key === 'z' || key === '6') {
               dispatch(Toolbar.actions.setSelectedTool(Tool.PanZoom))
               return
+            } else if (key === 'i' || key === '7') {
+              dispatch(Toolbar.actions.setSelectedTool(Tool.Inspector))
+              return
             } else if (key === 'g') {
               return dispatch((dispatch, getState) => {
                 const { canvasGrid } = getState().toolbar

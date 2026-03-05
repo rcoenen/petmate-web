@@ -14,3 +14,12 @@
     visibility: hidden;
   }
 }
+
+.inspectorPulse {
+  animation: inspector-pulse 1s ease-in-out infinite;
+}
+
+@keyframes inspector-pulse {
+  0%, 100% { outline-color: rgba(0, 255, 255, 0.3); }
+  50% { outline-color: rgba(0, 255, 255, 1.0); }
+}

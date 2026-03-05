@@ -23,7 +23,7 @@ interface TextCursorOverlay {
   opacity?: number;
 }
 
-type CharPosOverlayProps = TextCursorOverlay & { blink: boolean };
+type CharPosOverlayProps = TextCursorOverlay & { blink: boolean; inspectorPulse?: boolean; outlineWidth?: number };
 
 export default class CharPosOverlay extends Component<CharPosOverlayProps> {
   static defaultProps = {
@@ -47,14 +47,16 @@ export default class CharPosOverlay extends Component<CharPosOverlayProps> {
     const s = {
       ...charPosOverlayStyleBase,
       outlineColor: outlineColor,
+      outlineWidth: this.props.outlineWidth ?? 0.5,
       left: charPos.col*scale,
       top: charPos.row*scale,
       width: `${8}px`,
       height: `${8}px`
     }
     const { fillColor } = this.props
+    const className = this.props.inspectorPulse ? styles.inspectorPulse : undefined;
     return (
-      <div style={s}>
+      <div style={s} className={className}>
         {blink ?
           <div style={{
               width:'100%', height:'100%',

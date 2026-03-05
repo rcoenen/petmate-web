@@ -241,6 +241,10 @@ interface ToolbarSelectorProps {
   paletteRemap: number[];
   colorPalette: Rgb[];
   canvasFit: FramebufUIState['canvasFit'];
+  ecmMode: boolean;
+  extBgColor1: number;
+  extBgColor2: number;
+  extBgColor3: number;
 }
 
 interface ToolbarViewProps extends ToolbarSelectorProps {
@@ -256,6 +260,9 @@ interface ToolbarViewState {
   readonly pickerActive: {
     border: boolean;
     background: boolean;
+    extBg1: boolean;
+    extBg2: boolean;
+    extBg3: boolean;
   };
 }
 
@@ -266,11 +273,14 @@ class ToolbarView extends Component<
   state = {
     pickerActive: {
       border: false,
-      background: false
+      background: false,
+      extBg1: false,
+      extBg2: false,
+      extBg3: false
     }
   }
 
-  setPickerActive = (pickerId: 'border'|'background'|'canvasFit', val: boolean) => {
+  setPickerActive = (pickerId: 'border'|'background'|'canvasFit'|'extBg1'|'extBg2'|'extBg3', val: boolean) => {
     this.setState(prevState => {
       return {
         pickerActive: {
@@ -289,6 +299,16 @@ class ToolbarView extends Component<
   handleSelectBorderColor = (color: number) => {
     this.setPickerActive('border', false)
     this.props.Framebuffer.setBorderColor(color)
+  }
+
+  handleToggleEcm = () => {
+    this.props.Framebuffer.setEcmMode(!this.props.ecmMode)
+  }
+
+  handleSelectExtBgColor = (index: 1|2|3) => (color: number) => {
+    const pickerId = `extBg${index}` as 'extBg1'|'extBg2'|'extBg3';
+    this.setPickerActive(pickerId, false)
+    this.props.Framebuffer.setExtBgColor({ index, color })
   }
 
   render() {
@@ -388,6 +408,45 @@ class ToolbarView extends Component<
           colorPalette={this.props.colorPalette}
           tooltip='Background'
         />
+
+        {this.props.ecmMode && (
+          <React.Fragment>
+            <FbColorPicker
+              pickerId='extBg1'
+              containerClassName={styles.tooltip}
+              active={this.state.pickerActive.extBg1}
+              color={this.props.extBgColor1}
+              onSetActive={this.setPickerActive}
+              onSelectColor={this.handleSelectExtBgColor(1)}
+              paletteRemap={this.props.paletteRemap}
+              colorPalette={this.props.colorPalette}
+              tooltip='Bg 1'
+            />
+            <FbColorPicker
+              pickerId='extBg2'
+              containerClassName={styles.tooltip}
+              active={this.state.pickerActive.extBg2}
+              color={this.props.extBgColor2}
+              onSetActive={this.setPickerActive}
+              onSelectColor={this.handleSelectExtBgColor(2)}
+              paletteRemap={this.props.paletteRemap}
+              colorPalette={this.props.colorPalette}
+              tooltip='Bg 2'
+            />
+            <FbColorPicker
+              pickerId='extBg3'
+              containerClassName={styles.tooltip}
+              active={this.state.pickerActive.extBg3}
+              color={this.props.extBgColor3}
+              onSetActive={this.setPickerActive}
+              onSelectColor={this.handleSelectExtBgColor(3)}
+              paletteRemap={this.props.paletteRemap}
+              colorPalette={this.props.colorPalette}
+              tooltip='Bg 3'
+            />
+          </React.Fragment>
+        )}
+
         <Icon
           bottom={true}
           onIconClick={() => this.props.Toolbar.setShowSettings(true)}
@@ -447,8 +506,11 @@ const mapStateToProps = (state: RootState): ToolbarSelectorProps => {
     selectedTool:    state.toolbar.selectedTool,
     paletteRemap:    getSettingsPaletteRemap(state),
     colorPalette:    getSettingsCurrentColorPalette(state),
-    canvasFit
-
+    canvasFit,
+    ecmMode:      fp.maybe(framebuf, false, fb => fb.ecmMode ?? false),
+    extBgColor1:  fp.maybe(framebuf, 0, fb => fb.extBgColor1 ?? 0),
+    extBgColor2:  fp.maybe(framebuf, 0, fb => fb.extBgColor2 ?? 0),
+    extBgColor3:  fp.maybe(framebuf, 0, fb => fb.extBgColor3 ?? 0),
   }
 }
 export default connect(

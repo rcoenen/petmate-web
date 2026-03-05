@@ -173,7 +173,7 @@ export const rowColFromScreencode = (font: Font, code: number) => {
 }
 
 const framebufFields = (framebuf: Framebuf) => {
-  return {
+  const fields: any = {
     width: framebuf.width,
     height: framebuf.height,
     backgroundColor: framebuf.backgroundColor,
@@ -182,6 +182,13 @@ const framebufFields = (framebuf: Framebuf) => {
     name: framebuf.name,
     framebuf: framebuf.framebuf,
   }
+  if (framebuf.ecmMode) {
+    fields.ecmMode = framebuf.ecmMode;
+    fields.extBgColor1 = framebuf.extBgColor1;
+    fields.extBgColor2 = framebuf.extBgColor2;
+    fields.extBgColor3 = framebuf.extBgColor3;
+  }
+  return fields;
 }
 
 // Returns data for the given format. The caller downloads it.

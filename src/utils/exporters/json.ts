@@ -14,7 +14,7 @@ function flatten2d(arr: Pixel[][], field: 'code' | 'color'): number[] {
 }
 
 function convertFb(fb: FramebufWithFont) {
-  return {
+  const result: any = {
     width: fb.width,
     height: fb.height,
     backgroundColor: fb.backgroundColor,
@@ -23,7 +23,14 @@ function convertFb(fb: FramebufWithFont) {
     name: fb.name ? fb.name : undefined,
     screencodes: flatten2d(fb.framebuf, 'code'),
     colors: flatten2d(fb.framebuf, 'color')
+  };
+  if (fb.ecmMode) {
+    result.ecmMode = true;
+    result.extBgColor1 = fb.extBgColor1 ?? 0;
+    result.extBgColor2 = fb.extBgColor2 ?? 0;
+    result.extBgColor3 = fb.extBgColor3 ?? 0;
   }
+  return result;
 }
 
 export function saveJSON(fbs: FramebufWithFont[], customFonts: CustomFonts, fmt: FileFormatJson): string {

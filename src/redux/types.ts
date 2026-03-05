@@ -31,6 +31,10 @@ export interface Framebuf {
   readonly borderColor: number;
   readonly charset: string;
   readonly name?: string;
+  readonly ecmMode?: boolean;
+  readonly extBgColor1?: number;  // $D022
+  readonly extBgColor2?: number;  // $D023
+  readonly extBgColor3?: number;  // $D024
 };
 
 // This is the basically the same as the redux Framebuf except
@@ -124,6 +128,7 @@ export interface Toolbar {
   showImageConverter: boolean;
   selectedPaletteRemap: number;
   canvasGrid: boolean;
+  showColorModeLabels: boolean;
   shortcutsActive: boolean;
 
   newScreenSize: { width: number, height: number };

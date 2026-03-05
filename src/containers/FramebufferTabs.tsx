@@ -195,6 +195,7 @@ interface FramebufTabProps {
   framebuf: Framebuf;
   colorPalette: Rgb[];
   font: Font;
+  showColorModeLabels: boolean;
 
   setName: (name: string, framebufId: number) => void;
   onSetActiveTab: (id: number) => void;
@@ -279,6 +280,15 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
       }}
       ref={this.tabRef}
       >
+        {this.props.showColorModeLabels && <div style={{
+          fontSize: '0.6em',
+          color: 'rgb(150,150,150)',
+          marginBottom: '3px',
+          width: divWidth + 10,
+          textAlign: 'center'
+        }}>
+          {this.props.framebuf.ecmMode ? 'ECM' : 'Standard'}
+        </div>}
         <ContextMenuArea menuItems={menuItems}>
           <div
             onClick={this.handleSelect}
@@ -445,6 +455,7 @@ interface FramebufferTabsProps {
   activeScreen: number;
   colorPalette: Rgb[];
   newScreenSize: { width: number, height: number };
+  showColorModeLabels: boolean;
 
   getFramebufByIndex: (framebufId: number) => Framebuf | null;
   getFont: (framebuf: Framebuf) => { charset: string, font: Font };
@@ -500,6 +511,7 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
         font={font}
         colorPalette={props.colorPalette}
         setName={props.setFramebufName}
+        showColorModeLabels={props.showColorModeLabels}
       />
     );
   });
@@ -530,7 +542,8 @@ export default connect(
       screens: screensSelectors.getScreens(state),
       getFramebufByIndex: (idx: number) => selectors.getFramebufByIndex(state, idx),
       getFont: (fb: Framebuf) => selectors.getFramebufFont(state, fb),
-      colorPalette: getSettingsCurrentColorPalette(state)
+      colorPalette: getSettingsCurrentColorPalette(state),
+      showColorModeLabels: state.toolbar.showColorModeLabels
     }
   },
   (dispatch) => {

@@ -5,6 +5,25 @@ import { CHARSET_UPPER, CHARSET_LOWER } from '../../redux/editor';
 import { FileFormatAsm, FramebufWithFont } from  '../../redux/types';
 import * as fp from '../fp'
 
+function ecmInitCode(): string {
+  return `
+    ; Enable ECM mode
+    lda $d011
+    ora #$40
+    sta $d011
+`;
+}
+
+function ecmBgColorsCode(fb: FramebufWithFont): string {
+  return `    lda #${fb.extBgColor1 ?? 0}
+    sta $d022
+    lda #${fb.extBgColor2 ?? 0}
+    sta $d023
+    lda #${fb.extBgColor3 ?? 0}
+    sta $d024
+`;
+}
+
 interface InitCodeParams {
   borderColor: number;
   backgroundColor: number;
@@ -176,7 +195,10 @@ export function genAsm(fbs: FramebufWithFont[], fmt: FileFormatAsm) {
     default:      charsetBits = `%00010000 | ((${label}_font/2048)*2)`; break;
   }
   const syntax = syntaxes[fmt.exportOptions.assembler];
-  const init = options.standalone ? `${syntax.cli}\n${initCode({ backgroundColor, borderColor, charsetBits, label })}` : '';
+  let init = options.standalone ? `${syntax.cli}\n${initCode({ backgroundColor, borderColor, charsetBits, label })}` : '';
+  if (options.standalone && selectedFb.ecmMode) {
+    init += ecmInitCode() + ecmBgColorsCode(selectedFb);
+  }
   return convertSyntax(init + '\n' + binaryFormatHelp + '\n' + lines.join('\n') + '\n', syntax);
 }
 

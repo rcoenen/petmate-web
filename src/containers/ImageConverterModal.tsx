@@ -33,15 +33,22 @@ function saveSettings(settings: ConverterSettings) {
 
 function resultToFramebuf(result: ConversionResult): Framebuf {
   const framebuf: Pixel[][] = [];
+  const isEcm = result.mode === 'ecm';
   for (let row = 0; row < 25; row++) {
     const rowData: Pixel[] = [];
     for (let col = 0; col < 40; col++) {
       const idx = row * 40 + col;
-      rowData.push({ code: result.screencodes[idx], color: result.colors[idx] });
+      let code = result.screencodes[idx];
+      if (isEcm) {
+        // Encode bg selector in upper 2 bits of the screencode
+        const bgSel = result.bgIndices[idx] ?? 0;
+        code = ((bgSel & 3) << 6) | (code & 0x3F);
+      }
+      rowData.push({ code, color: result.colors[idx] });
     }
     framebuf.push(rowData);
   }
-  return {
+  const fb: Framebuf = {
     framebuf,
     width: 40,
     height: 25,
@@ -49,6 +56,16 @@ function resultToFramebuf(result: ConversionResult): Framebuf {
     borderColor: result.backgroundColor,
     charset: 'upper',
   };
+  if (isEcm) {
+    return {
+      ...fb,
+      ecmMode: true,
+      extBgColor1: result.ecmBgColors[1] ?? 0,
+      extBgColor2: result.ecmBgColors[2] ?? 0,
+      extBgColor3: result.ecmBgColors[3] ?? 0,
+    };
+  }
+  return fb;
 }
 
 interface ConvertOutput {
@@ -366,9 +383,6 @@ export default function ImageConverterModal() {
                 className={styles.importBtn}
                 onClick={() => handleImport(results.ecm)}
               >Import ECM</button>
-              <div className={styles.ecmNote}>
-                Note: ECM result is flattened to standard mode on import.
-              </div>
             </div>
           </div>
         )}

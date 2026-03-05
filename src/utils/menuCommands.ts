@@ -128,6 +128,17 @@ export function dispatchMenuCommand(
       dispatch(settingsActions.saveEdits());
       return;
     }
+    case 'toggle-color-mode-labels': {
+      const current = getState().toolbar.showColorModeLabels;
+      dispatch(Toolbar.actions.setShowColorModeLabels(!current));
+      return;
+    }
+    case 'set-mode-standard':
+      dispatch(Toolbar.actions.setCurrentScreenEcmMode(false));
+      return;
+    case 'set-mode-ecm':
+      dispatch(Toolbar.actions.setCurrentScreenEcmMode(true));
+      return;
     default:
       console.warn('unknown menu command:', command);
   }

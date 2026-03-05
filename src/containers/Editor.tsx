@@ -108,6 +108,11 @@ interface BrushOverlayProps {
   colorPalette: Rgb[];
   brush: Brush | null;
   font: Font;
+  ecmMode?: boolean;
+  backgroundColorIndex?: number;
+  extBgColor1?: number;
+  extBgColor2?: number;
+  extBgColor3?: number;
 }
 
 class BrushOverlay extends Component<BrushOverlayProps> {
@@ -165,6 +170,11 @@ class BrushOverlay extends Component<BrushOverlayProps> {
           colorPalette={this.props.colorPalette}
           font={this.props.font}
           framebuf={this.props.brush.framebuf}
+          ecmMode={this.props.ecmMode}
+          backgroundColorIndex={this.props.backgroundColorIndex}
+          extBgColor1={this.props.extBgColor1}
+          extBgColor2={this.props.extBgColor2}
+          extBgColor3={this.props.extBgColor3}
         />
       </div>
     )
@@ -197,6 +207,11 @@ interface FramebufferViewProps {
   font: Font;
 
   canvasGrid: boolean;
+
+  ecmMode?: boolean;
+  extBgColor1?: number;
+  extBgColor2?: number;
+  extBgColor3?: number;
 
   onCharPosChanged: (args: {isActive: boolean, charPos: Coord2}) => void;
 
@@ -621,6 +636,11 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
               colorPalette={this.props.colorPalette}
               font={this.props.font}
               brush={this.props.brush}
+              ecmMode={this.props.ecmMode}
+              backgroundColorIndex={this.props.backgroundColor}
+              extBgColor1={this.props.extBgColor1}
+              extBgColor2={this.props.extBgColor2}
+              extBgColor3={this.props.extBgColor3}
             />
         } else {
           overlays =
@@ -738,6 +758,11 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
             textColor={colorHighlight}
             font={this.props.font}
             colorPalette={this.props.colorPalette}
+            ecmMode={this.props.ecmMode}
+            backgroundColorIndex={this.props.backgroundColor}
+            extBgColor1={this.props.extBgColor1}
+            extBgColor2={this.props.extBgColor2}
+            extBgColor3={this.props.extBgColor3}
           />
           {overlays}
           {this.props.canvasGrid ? <GridOverlay width={charWidth} height={charHeight} color={gridColor} /> : null}
@@ -803,6 +828,10 @@ const FramebufferCont = connect(
       framebufWidth: framebuf.width,
       framebufHeight: framebuf.height,
       backgroundColor: framebuf.backgroundColor,
+      ecmMode: framebuf.ecmMode,
+      extBgColor1: framebuf.extBgColor1,
+      extBgColor2: framebuf.extBgColor2,
+      extBgColor3: framebuf.extBgColor3,
       undoId: state.toolbar.undoId,
       curScreencode: selectors.getScreencodeWithTransform(selected, font, charTransform),
       selectedTool: state.toolbar.selectedTool,

@@ -1,5 +1,6 @@
 
 import { FramebufWithFont, RgbPalette } from '../../redux/types'
+import { ecmCharIndex, ecmCellBgColor } from '../ecm'
 
 // These match what VICE exports as a PNG.
 const BORDER_LEFT_WIDTH = 32;
@@ -28,12 +29,15 @@ export function framebufToPixelsIndexed(fb: FramebufWithFont, borders: boolean):
 
   buf.fill(borderColor);
 
+  const isEcm = fb.ecmMode;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const pix = framebuf[y][x]
-      const c = pix.code
+      const code = pix.code
       const col = pix.color
-      const boffs = c*8;
+      const charIdx = isEcm ? ecmCharIndex(code) : code;
+      const cellBg = isEcm ? ecmCellBgColor(fb, code) : backgroundColor;
+      const boffs = charIdx*8;
 
       for (let cy = 0; cy < 8; cy++) {
         const p = fontData[boffs + cy]
@@ -41,7 +45,7 @@ export function framebufToPixelsIndexed(fb: FramebufWithFont, borders: boolean):
           const set = ((128 >> i) & p) !== 0
           const offs = (y*8 + cy + imgYOffset) * imgWidth + (x*8 + i) + imgXOffset;
 
-          const c = set ? col : backgroundColor;
+          const c = set ? col : cellBg;
           buf[offs] = c;
         }
       }

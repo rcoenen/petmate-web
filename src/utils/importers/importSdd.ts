@@ -18,10 +18,16 @@ export function loadSDD(content: string): Framebuf[] {
     const bgEl = screenEl.querySelector('BackgroundColour');
     const borderEl = screenEl.querySelector('BorderColour');
     const nameEl = screenEl.querySelector('Description');
+    const d022El = screenEl.querySelector('D022Colour');
+    const d023El = screenEl.querySelector('D023Colour');
+    const d024El = screenEl.querySelector('D024Colour');
 
     const backgroundColor = bgEl ? parseInt(bgEl.textContent ?? '6') : 6;
     const borderColor = borderEl ? parseInt(borderEl.textContent ?? '14') : 14;
     const name = nameEl ? (nameEl.textContent?.trim() ?? 'Screen') : 'Screen';
+    const extBgColor1 = d022El ? parseInt(d022El.textContent ?? '0') : 0;
+    const extBgColor2 = d023El ? parseInt(d023El.textContent ?? '0') : 0;
+    const extBgColor3 = d024El ? parseInt(d024El.textContent ?? '0') : 0;
 
     const rowEls = screenEl.querySelectorAll('RowData');
     const pixels: { code: number; color: number }[][] = [];
@@ -47,7 +53,7 @@ export function loadSDD(content: string): Framebuf[] {
       pixels.push(rowPixels);
     });
 
-    framebufs.push(framebufFromJson({
+    const fbData: any = {
       width,
       height,
       backgroundColor,
@@ -55,7 +61,14 @@ export function loadSDD(content: string): Framebuf[] {
       charset: 'upper',
       name,
       framebuf: pixels,
-    }));
+    };
+    if (isExtended) {
+      fbData.ecmMode = true;
+      fbData.extBgColor1 = extBgColor1;
+      fbData.extBgColor2 = extBgColor2;
+      fbData.extBgColor3 = extBgColor3;
+    }
+    framebufs.push(framebufFromJson(fbData));
   });
 
   return framebufs;

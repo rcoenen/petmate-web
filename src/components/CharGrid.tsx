@@ -1,6 +1,7 @@
 
 import React, { Component } from 'react';
 import { Rgb, Font, Pixel, Coord2 } from '../redux/types';
+import { ecmCharIndex, ecmBgSelector } from '../utils/ecm';
 
 class CharsetCache {
   private images: ImageData[][] = Array(16);
@@ -42,6 +43,30 @@ class CharsetCache {
   getImage(screencode: number, color: number) {
     return this.images[color][screencode]
   }
+
+  /** ECM: render char shape (lower 6 bits) with explicit bg color */
+  getImageWithBg(screencode: number, fgColor: number, bgColor: Rgb): ImageData {
+    const charIdx = ecmCharIndex(screencode);
+    const src = this.images[fgColor][charIdx];
+    const img = new ImageData(8, 8);
+    const srcData = src.data;
+    const dstData = img.data;
+    for (let i = 0; i < srcData.length; i += 4) {
+      if (srcData[i + 3] === 0) {
+        // Transparent pixel = background
+        dstData[i]     = bgColor.r;
+        dstData[i + 1] = bgColor.g;
+        dstData[i + 2] = bgColor.b;
+        dstData[i + 3] = 255;
+      } else {
+        dstData[i]     = srcData[i];
+        dstData[i + 1] = srcData[i + 1];
+        dstData[i + 2] = srcData[i + 2];
+        dstData[i + 3] = 255;
+      }
+    }
+    return img;
+  }
 }
 
 interface CharGridProps {
@@ -57,6 +82,11 @@ interface CharGridProps {
   colorPalette: Rgb[];
   font: Font;
   framebuf: Pixel[][];
+  ecmMode?: boolean;
+  backgroundColorIndex?: number;
+  extBgColor1?: number;
+  extBgColor2?: number;
+  extBgColor3?: number;
 }
 
 export default class CharGrid extends Component<CharGridProps> {
@@ -68,6 +98,17 @@ export default class CharGrid extends Component<CharGridProps> {
 
   private font: CharsetCache | null = null;
   private canvasRef = React.createRef<HTMLCanvasElement>();
+
+  private resolveEcmBg(code: number): number {
+    const sel = ecmBgSelector(code);
+    switch (sel) {
+      case 0: return this.props.backgroundColorIndex ?? 0;
+      case 1: return this.props.extBgColor1 ?? 0;
+      case 2: return this.props.extBgColor2 ?? 0;
+      case 3: return this.props.extBgColor3 ?? 0;
+      default: return this.props.backgroundColorIndex ?? 0;
+    }
+  }
 
   componentDidMount() {
     this.draw()
@@ -84,7 +125,11 @@ export default class CharGrid extends Component<CharGridProps> {
       this.props.textColor !== prevProps.textColor ||
       this.props.backgroundColor !== prevProps.backgroundColor ||
       this.props.font !== prevProps.font ||
-      this.props.colorPalette !== prevProps.colorPalette) {
+      this.props.colorPalette !== prevProps.colorPalette ||
+      this.props.ecmMode !== prevProps.ecmMode ||
+      this.props.extBgColor1 !== prevProps.extBgColor1 ||
+      this.props.extBgColor2 !== prevProps.extBgColor2 ||
+      this.props.extBgColor3 !== prevProps.extBgColor3) {
       this.draw(prevProps)
     }
   }
@@ -118,6 +163,7 @@ export default class CharGrid extends Component<CharGridProps> {
          invalidate)
         :
         true
+    const ecm = this.props.ecmMode;
     for (var y = 0; y < this.props.height; y++) {
       const charRow = framebuf[y + srcY]
       if (!dstSrcChanged && charRow === prevProps!.framebuf[y + srcY]) {
@@ -125,7 +171,13 @@ export default class CharGrid extends Component<CharGridProps> {
       }
       for (var x = 0; x < this.props.width; x++) {
         const c = charRow[x + srcX]
-        const img = this.font.getImage(c.code, c.color)
+        let img: ImageData;
+        if (ecm) {
+          const bgIdx = this.resolveEcmBg(c.code);
+          img = this.font.getImageWithBg(c.code, c.color, this.props.colorPalette[bgIdx]);
+        } else {
+          img = this.font.getImage(c.code, c.color);
+        }
         ctx.putImageData(img, x*xScale, y*yScale)
       }
     }
@@ -136,7 +188,13 @@ export default class CharGrid extends Component<CharGridProps> {
       if (charPos.row >= 0 && charPos.row < this.props.height &&
           charPos.col >= 0 && charPos.col < this.props.width) {
         const c = framebuf[charPos.row][charPos.col]
-        const img = this.font.getImage(c.code, c.color)
+        let img: ImageData;
+        if (ecm) {
+          const bgIdx = this.resolveEcmBg(c.code);
+          img = this.font.getImageWithBg(c.code, c.color, this.props.colorPalette[bgIdx]);
+        } else {
+          img = this.font.getImage(c.code, c.color);
+        }
         ctx.putImageData(img, charPos.col*xScale, charPos.row*yScale)
       }
     }
@@ -153,7 +211,13 @@ export default class CharGrid extends Component<CharGridProps> {
             this.props.textColor :
             framebuf[charPos.row][charPos.col].color
         }
-        const img = this.font.getImage(c.code, c.color)
+        let img: ImageData;
+        if (ecm) {
+          const bgIdx = this.resolveEcmBg(c.code);
+          img = this.font.getImageWithBg(c.code, c.color, this.props.colorPalette[bgIdx]);
+        } else {
+          img = this.font.getImage(c.code, c.color);
+        }
         ctx.putImageData(img, charPos.col*xScale, charPos.row*yScale)
       }
     }

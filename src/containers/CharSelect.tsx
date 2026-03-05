@@ -21,6 +21,7 @@ import * as screensSelectors from '../redux/screensSelectors'
 import {
   getSettingsCurrentColorPalette
 } from '../redux/settingsSelectors'
+import { ecmScreencode } from '../utils/ecm'
 
 import FontSelector from '../components/FontSelector'
 
@@ -39,6 +40,10 @@ interface CharSelectProps {
   selected: Coord2 | null;
   backgroundColor: number;
   textColor: number;
+  ecmMode: boolean;
+  extBgColor1: number;
+  extBgColor2: number;
+  extBgColor3: number;
 }
 
 // Char position & click hook
@@ -99,15 +104,25 @@ function CharSelectView(props: {
   onCharSelected: (pos: Coord2|null) => void;
   setCharset: (charset: string) => void;
 }) {
-  const W = 16
-  const H = 16
+  const W = props.fb[0]?.length ?? 16;
+  const H = props.fb.length;
   const { scaleX, scaleY } = props.canvasScale;
 
   const { charPos, divProps } = useCharPos(W, H, props.selected);
 
-  let screencode: number|null = utils.charScreencodeFromRowCol(props.font, props.selected);
-  if (charPos !== null) {
-    screencode = utils.charScreencodeFromRowCol(props.font, charPos);
+  let screencode: number|null = null;
+  if (W === 16 && H === 16) {
+    screencode = utils.charScreencodeFromRowCol(props.font, props.selected);
+    if (charPos !== null) {
+      screencode = utils.charScreencodeFromRowCol(props.font, charPos);
+    }
+  } else {
+    // ECM mode: screencode from the framebuf directly
+    if (charPos !== null && charPos.row >= 0 && charPos.row < H && charPos.col >= 0 && charPos.col < W) {
+      screencode = props.fb[charPos.row][charPos.col].code;
+    } else if (props.selected && props.selected.row >= 0 && props.selected.row < H && props.selected.col >= 0 && props.selected.col < W) {
+      screencode = props.fb[props.selected.row][props.selected.col].code;
+    }
   }
 
   let handleOnClick = useCallback(function() {
@@ -186,11 +201,15 @@ function CharSelectView(props: {
   )
 }
 
-class CharSelect extends Component<CharSelectProps> {
+class CharSelect extends Component<CharSelectProps, { ecmPage: number }> {
 
   fb: Pixel[][]|null = null;
   font: Font|null = null;
   prevTextColor = -1;
+  prevEcmMode = false;
+  prevEcmPage = 0;
+
+  state = { ecmPage: 0 };
 
   constructor (props: CharSelectProps) {
     super(props)
@@ -198,56 +217,122 @@ class CharSelect extends Component<CharSelectProps> {
   }
 
   computeCachedFb(textColor: number) {
-    const { font } = this.props
-    this.fb = fp.mkArray(16, y => {
-      return fp.mkArray(16, x => {
-        return {
-          code: utils.charScreencodeFromRowCol(font, {row:y, col:x})!,
-          color: textColor
-        }
+    const { font, ecmMode } = this.props
+    if (ecmMode) {
+      // Filter charOrder to only the 64 char shapes available in ECM (codes 0-63)
+      const ecmChars = font.charOrder.filter(c => c < 64);
+      this.fb = fp.mkArray(8, y => {
+        return fp.mkArray(8, x => {
+          const idx = y * 8 + x;
+          return {
+            code: idx < ecmChars.length ? ecmChars[idx] : 0,
+            color: textColor
+          }
+        })
       })
-    })
+    } else {
+      this.fb = fp.mkArray(16, y => {
+        return fp.mkArray(16, x => {
+          return {
+            code: utils.charScreencodeFromRowCol(font, {row:y, col:x})!,
+            color: textColor
+          }
+        })
+      })
+    }
     this.prevTextColor = textColor
+    this.prevEcmMode = ecmMode
+    this.prevEcmPage = this.state.ecmPage
     this.font = font
   }
 
   handleClick = (charPos: Coord2 | null) => {
-    this.props.Toolbar.setCurrentChar(charPos)
+    if (this.props.ecmMode && charPos && this.fb) {
+      // Get the base char code (0-63) from what's displayed in the grid
+      const baseCode = this.fb[charPos.row][charPos.col].code;
+      // Encode the bg page into the upper 2 bits
+      const screencode = ecmScreencode(baseCode, this.state.ecmPage);
+      // Map back to the 16x16 charOrder position for the toolbar
+      const mappedPos = utils.rowColFromScreencode(this.props.font, screencode);
+      this.props.Toolbar.setCurrentChar(mappedPos);
+    } else {
+      this.props.Toolbar.setCurrentChar(charPos);
+    }
   }
 
   render () {
-    const { colorPalette } = this.props
-    // Editor needs to specify a fixed width/height because the contents use
-    // relative/absolute positioning and thus seem to break out of the CSS
-    // grid.
+    const { colorPalette, ecmMode } = this.props
     const { scaleX, scaleY } = this.props.canvasScale
-    const w = `${Math.floor(scaleX*8*16+scaleX*16)}px`
-    const h = `${Math.floor(scaleY*8*16+scaleY*16)}px`
-    const backg = utils.colorIndexToCssRgb(
-      colorPalette, this.props.backgroundColor
-    )
+    const gridSize = ecmMode ? 8 : 16;
+    const w = `${Math.floor(scaleX*8*gridSize+scaleX*gridSize)}px`
+    const h = `${Math.floor(scaleY*8*gridSize+scaleY*gridSize)}px`
+
+    // In ECM, show the bg color for the current page
+    let bgColorIdx = this.props.backgroundColor;
+    if (ecmMode) {
+      const page = this.state.ecmPage;
+      if (page === 1) bgColorIdx = this.props.extBgColor1;
+      else if (page === 2) bgColorIdx = this.props.extBgColor2;
+      else if (page === 3) bgColorIdx = this.props.extBgColor3;
+    }
+    const backg = utils.colorIndexToCssRgb(colorPalette, bgColorIdx)
+
     const s = {width: w, height:h}
     if (this.prevTextColor !== this.props.textColor ||
-      this.font !== this.props.font) {
+      this.font !== this.props.font ||
+      this.prevEcmMode !== ecmMode ||
+      this.prevEcmPage !== this.state.ecmPage) {
       this.computeCachedFb(this.props.textColor)
     }
     if (!this.fb) {
       throw new Error('FB cannot be null here');
     }
+
+    const selected = ecmMode ? null : this.props.selected;
+
     return (
-      <CharSelectView
-        canvasScale={this.props.canvasScale}
-        backgroundColor={backg}
-        style={s}
-        fb={this.fb}
-        charset={this.props.charset}
-        font={this.props.font}
-        customFonts={this.props.customFonts}
-        colorPalette={colorPalette}
-        selected={this.props.selected!}
-        onCharSelected={this.handleClick}
-        setCharset={this.props.Framebuffer.setCharset}
-      />
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {ecmMode && (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'row',
+            marginBottom: '4px',
+            gap: '2px'
+          }}>
+            {[0, 1, 2, 3].map(page => (
+              <button
+                key={page}
+                onClick={() => this.setState({ ecmPage: page })}
+                style={{
+                  flex: 1,
+                  padding: '2px 4px',
+                  fontSize: '0.7em',
+                  backgroundColor: this.state.ecmPage === page ? 'rgba(255,255,255,0.2)' : 'transparent',
+                  color: this.state.ecmPage === page ? '#fff' : 'rgb(120,120,120)',
+                  border: this.state.ecmPage === page ? '1px solid rgba(255,255,255,0.4)' : '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '3px',
+                  cursor: 'pointer'
+                }}
+              >
+                Bg {page}
+              </button>
+            ))}
+          </div>
+        )}
+        <CharSelectView
+          canvasScale={this.props.canvasScale}
+          backgroundColor={backg}
+          style={s}
+          fb={this.fb}
+          charset={this.props.charset}
+          font={this.props.font}
+          customFonts={this.props.customFonts}
+          colorPalette={colorPalette}
+          selected={selected!}
+          onCharSelected={this.handleClick}
+          setCharset={this.props.Framebuffer.setCharset}
+        />
+      </div>
     )
   }
 }
@@ -276,7 +361,11 @@ const mapStateToProps = (state: RootState) => {
     charset,
     font,
     customFonts: selectors.getCustomFonts(state),
-    colorPalette: getSettingsCurrentColorPalette(state)
+    colorPalette: getSettingsCurrentColorPalette(state),
+    ecmMode: framebuf?.ecmMode ?? false,
+    extBgColor1: framebuf?.extBgColor1 ?? 0,
+    extBgColor2: framebuf?.extBgColor2 ?? 0,
+    extBgColor3: framebuf?.extBgColor3 ?? 0,
   }
 }
 

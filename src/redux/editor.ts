@@ -54,6 +54,8 @@ const SET_BORDER_COLOR = 'Framebuffer/SET_BORDER_COLOR'
 const SET_CHARSET = 'Framebuffer/SET_CHARSET'
 const SET_NAME = 'Framebuffer/SET_NAME'
 const SET_DIMS = 'Framebuffer/SET_DIMS'
+const SET_ECM_MODE = 'Framebuffer/SET_ECM_MODE'
+const SET_EXT_BG_COLOR = 'Framebuffer/SET_EXT_BG_COLOR'
 
 const actionCreators = {
   setPixel: (data: SetCharParams, undoId: number|null, framebufIndex: number) => createFbAction(SET_PIXEL, framebufIndex, undoId, data),
@@ -71,6 +73,9 @@ const actionCreators = {
   setName: (data: string|undefined, framebufIndex: number) => createFbAction(SET_NAME, framebufIndex, null, data),
 
   setDims: (data: { width: number, height: number }, framebufIndex: number) => createFbAction(SET_DIMS, framebufIndex, null, data),
+
+  setEcmMode: (data: boolean, framebufIndex: number) => createFbAction(SET_ECM_MODE, framebufIndex, null, data),
+  setExtBgColor: (data: { index: 1|2|3, color: number }, framebufIndex: number) => createFbAction(SET_EXT_BG_COLOR, framebufIndex, null, data),
 };
 
 export const actions = actionCreators;
@@ -184,7 +189,11 @@ export function fbReducer(state: Framebuf = {
   backgroundColor: DEFAULT_BACKGROUND_COLOR,
   borderColor: DEFAULT_BORDER_COLOR,
   charset: CHARSET_UPPER,
-  name: undefined
+  name: undefined,
+  ecmMode: false,
+  extBgColor1: 0,
+  extBgColor2: 0,
+  extBgColor3: 0
 }, action: Actions): Framebuf {
   switch (action.type) {
     case SET_PIXEL:
@@ -217,7 +226,11 @@ export function fbReducer(state: Framebuf = {
         backgroundColor: c.backgroundColor,
         borderColor: c.borderColor,
         charset: c.charset,
-        name
+        name,
+        ecmMode: c.ecmMode ?? false,
+        extBgColor1: c.extBgColor1 ?? 0,
+        extBgColor2: c.extBgColor2 ?? 0,
+        extBgColor3: c.extBgColor3 ?? 0
       }
     case SET_BACKGROUND_COLOR:
       return updateField(state, 'backgroundColor', action.data);
@@ -227,6 +240,15 @@ export function fbReducer(state: Framebuf = {
       return updateField(state, 'charset', action.data);
     case SET_NAME:
       return updateField(state, 'name', action.data);
+    case SET_ECM_MODE:
+      return updateField(state, 'ecmMode', action.data);
+    case SET_EXT_BG_COLOR: {
+        const { index, color } = action.data;
+        if (index === 1) return updateField(state, 'extBgColor1', color);
+        if (index === 2) return updateField(state, 'extBgColor2', color);
+        if (index === 3) return updateField(state, 'extBgColor3', color);
+        return state;
+      }
     case SET_DIMS: {
         const { width, height } = action.data;
         return {

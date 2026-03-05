@@ -182,6 +182,7 @@ const actionCreators = {
   setShowImageConverter: (flag: boolean) => createAction('Toolbar/SET_SHOW_IMAGE_CONVERTER', flag),
   setSelectedPaletteRemap: (remapIdx: number) => createAction('Toolbar/SET_SELECTED_PALETTE_REMAP', remapIdx),
   setCanvasGrid: (flag: boolean) => createAction('Toolbar/SET_CANVAS_GRID', flag),
+  setShowColorModeLabels: (flag: boolean) => createAction('Toolbar/SET_SHOW_COLOR_MODE_LABELS', flag),
   setShortcutsActive: (flag: boolean) => createAction('Toolbar/SET_SHORTCUTS_ACTIVE', flag),
   setNewScreenSize: (dims: { width: number, height: number }) => createAction('Toolbar/SET_NEW_SCREEN_SIZE', dims)
 };
@@ -527,6 +528,12 @@ export class Toolbar {
       });
     },
 
+    setCurrentScreenEcmMode: (ecmMode: boolean): RootStateThunk => {
+      return dispatchForCurrentFramebuf((dispatch, framebufIndex) => {
+        dispatch(Framebuffer.actions.setEcmMode(ecmMode, framebufIndex))
+      });
+    },
+
     setCurrentFramebufUIState: (uiState: FramebufUIState): RootStateThunk => {
       return dispatchForCurrentFramebuf((dispatch, framebufIndex) => {
         dispatch(Toolbar.actions.setFramebufUIState(framebufIndex, uiState));
@@ -559,6 +566,7 @@ export class Toolbar {
       showImageConverter: false,
       selectedPaletteRemap: 0,
       canvasGrid: false,
+      showColorModeLabels: true,
       shortcutsActive: true,
       newScreenSize: { width: DEFAULT_FB_WIDTH, height: DEFAULT_FB_HEIGHT },
       framebufUIState: {}
@@ -694,6 +702,8 @@ export class Toolbar {
         return updateField(state, 'selectedPaletteRemap', action.data);
       case 'Toolbar/SET_CANVAS_GRID':
         return updateField(state, 'canvasGrid', action.data);
+      case 'Toolbar/SET_SHOW_COLOR_MODE_LABELS':
+        return updateField(state, 'showColorModeLabels', action.data);
       case 'Toolbar/SET_SHORTCUTS_ACTIVE':
         return updateField(state, 'shortcutsActive', action.data);
       case 'Toolbar/SET_NEW_SCREEN_SIZE':

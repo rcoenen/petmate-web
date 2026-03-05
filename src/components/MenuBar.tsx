@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useDispatch, useSelector, useStore } from 'react-redux';
 import { dispatchMenuCommand } from '../utils/menuCommands';
 import { getSettingsCrtFilter } from '../redux/settingsSelectors';
+import * as selectors from '../redux/selectors';
 import { RootState } from '../redux/types';
 import s from './MenuBar.module.css';
 
@@ -12,6 +13,7 @@ interface MenuItemDef {
   submenu?: MenuItemDef[];
   separator?: never;
   href?: string;
+  heading?: boolean;
 }
 interface SeparatorDef {
   separator: true;
@@ -72,15 +74,7 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
   },
   {
     label: 'Edit',
-    items: [
-      { label: 'Undo',         cmd: 'undo',              accelerator: 'Ctrl+Z' },
-      { label: 'Redo',         cmd: 'redo',              accelerator: 'Ctrl+Y' },
-      { separator: true },
-      { label: 'Shift Left',   cmd: 'shift-screen-left',  accelerator: 'Alt+←' },
-      { label: 'Shift Right',  cmd: 'shift-screen-right', accelerator: 'Alt+→' },
-      { label: 'Shift Up',     cmd: 'shift-screen-up',    accelerator: 'Alt+↑' },
-      { label: 'Shift Down',   cmd: 'shift-screen-down',  accelerator: 'Alt+↓' },
-    ],
+    items: [], // populated dynamically with screen mode state
   },
   {
     label: 'Display',
@@ -106,6 +100,9 @@ function Dropdown({ items, onCommand }: DropdownProps) {
       {items.map((item, i) => {
         if (isSep(item)) {
           return <li key={i} className={s.separator} />;
+        }
+        if (item.heading) {
+          return <li key={i} className={s.heading}>{item.label}</li>;
         }
         const hasSubmenu = item.submenu && item.submenu.length > 0;
         return (
@@ -155,6 +152,11 @@ export default function MenuBar() {
   const store = useStore();
   const navRef = React.useRef<HTMLElement>(null);
   const crtFilter = useSelector((state: RootState) => getSettingsCrtFilter(state));
+  const showColorModeLabels = useSelector((state: RootState) => state.toolbar.showColorModeLabels);
+  const ecmMode = useSelector((state: RootState) => {
+    const fb = selectors.getCurrentFramebuf(state);
+    return fb?.ecmMode ?? false;
+  });
 
   const handleCommand = useCallback((cmd: string) => {
     setOpenMenu(null);
@@ -173,16 +175,41 @@ export default function MenuBar() {
     return () => document.removeEventListener('mousedown', close);
   }, [openMenu]);
 
-  const crtItems: ItemDef[] = [
+  const editItems: ItemDef[] = [
+    { label: 'Undo',         cmd: 'undo',              accelerator: 'Ctrl+Z' },
+    { label: 'Redo',         cmd: 'redo',              accelerator: 'Ctrl+Y' },
+    { separator: true },
+    { label: 'Color Mode', heading: true },
+    { label: `${!ecmMode ? '\u2022 ' : '  '}Standard`, cmd: 'set-mode-standard' },
+    { label: `${ecmMode ? '\u2022 ' : '  '}ECM`, cmd: 'set-mode-ecm' },
+    { separator: true },
+    { label: 'Shift Left',   cmd: 'shift-screen-left',  accelerator: 'Alt+\u2190' },
+    { label: 'Shift Right',  cmd: 'shift-screen-right', accelerator: 'Alt+\u2192' },
+    { label: 'Shift Up',     cmd: 'shift-screen-up',    accelerator: 'Alt+\u2191' },
+    { label: 'Shift Down',   cmd: 'shift-screen-down',  accelerator: 'Alt+\u2193' },
+  ];
+
+  const crtSubmenu: MenuItemDef[] = [
     { label: `${crtFilter === 'none' ? '\u2022 ' : '  '}Normal`, cmd: 'crt-none' },
     { label: `${crtFilter === 'scanlines' ? '\u2022 ' : '  '}Scanlines`, cmd: 'crt-scanlines' },
     { label: `${crtFilter === 'colorTv' ? '\u2022 ' : '  '}Color TV`, cmd: 'crt-colorTv' },
     { label: `${crtFilter === 'bwTv' ? '\u2022 ' : '  '}B&W TV`, cmd: 'crt-bwTv' },
   ];
 
-  const menus = menuDefs.map(menu =>
-    menu.label === 'Display' ? { ...menu, items: crtItems } : menu
-  );
+  const displayItems: ItemDef[] = [
+    { label: 'CRT Filter', submenu: crtSubmenu },
+    { separator: true },
+    { label: 'Color Mode Labels', submenu: [
+      { label: `${showColorModeLabels ? '\u2022 ' : '  '}Show`, cmd: 'toggle-color-mode-labels' },
+      { label: `${!showColorModeLabels ? '\u2022 ' : '  '}Hide`, cmd: 'toggle-color-mode-labels' },
+    ]},
+  ];
+
+  const menus = menuDefs.map(menu => {
+    if (menu.label === 'Display') return { ...menu, items: displayItems };
+    if (menu.label === 'Edit') return { ...menu, items: editItems };
+    return menu;
+  });
 
   return (
     <nav className={s.menuBar} ref={navRef}>

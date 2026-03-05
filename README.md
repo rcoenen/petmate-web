@@ -19,4 +19,4 @@ Petsciishop is a C64 PETSCII graphics editor that runs entirely in your browser 
 
 ## Credits
 
-Originally inspired by [Petmate](https://github.com/nurpax/petmate) by Janne Hellsten. Image converter algorithm ported from [c64-image-to-petscii](https://github.com/niclas2109/c64-image-to-petscii).
+Originally inspired by [Petmate](https://github.com/nurpax/petmate) by Janne Hellsten. Image converter algorithm ported from [c64-image-to-petscii](https://github.com/mkeke/c64-image-to-petscii).

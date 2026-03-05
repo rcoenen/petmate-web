@@ -6,7 +6,7 @@ Petsciishop includes a state-of-the-art image-to-PETSCII converter (File > Conve
 
 ## The Problem
 
-Converting a photo to PETSCII is a constrained optimization problem with several compounding limitations:
+Converting an image to PETSCII is a constrained optimization problem with several compounding limitations:
 
 - **320×200 pixels**, split into a grid of **40×25 cells**, each 8×8 pixels
 - **256 PETSCII characters** — each a fixed black-and-white bitmap shape

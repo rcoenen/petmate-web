@@ -3,6 +3,8 @@
 // Uses CIE Lab perceptual color matching, saliency-weighted character
 // optimization, and supports Standard (256 chars) and ECM (64 chars, 4 bg) modes.
 
+import { C64_PALETTES } from '../c64Palettes';
+
 // --- Color Science ---
 
 interface Lab { L: number; a: number; b: number; }
@@ -92,38 +94,7 @@ export interface ConverterPalette {
   hex: string[];
 }
 
-export const PALETTES: ConverterPalette[] = [
-  {
-    id: 'colodore',
-    name: 'Colodore (2017)',
-    hex: [
-      '#000000', '#FFFFFF', '#813338', '#75CEC8',
-      '#8E3C97', '#56AC4D', '#2E2C9B', '#EDF171',
-      '#8E5029', '#553800', '#C46C71', '#4A4A4A',
-      '#7B7B7B', '#A9FF9F', '#706DEB', '#B2B2B2',
-    ],
-  },
-  {
-    id: 'pepto2004',
-    name: 'Pepto (2004)',
-    hex: [
-      '#000000', '#FFFFFF', '#68372B', '#70A4B2',
-      '#6F3D86', '#588D43', '#352879', '#B8C76F',
-      '#6F4F25', '#433900', '#9A6759', '#444444',
-      '#6C6C6C', '#9AD284', '#6C5EB5', '#959595',
-    ],
-  },
-  {
-    id: 'ccs64',
-    name: 'CCS64',
-    hex: [
-      '#101010', '#FFFFFF', '#AC3232', '#79C1C8',
-      '#AC32AC', '#53AC53', '#32327F', '#CBCB53',
-      '#AC5300', '#795300', '#CB7979', '#535353',
-      '#797979', '#79CB79', '#7979CB', '#A6A6A6',
-    ],
-  },
-];
+export const PALETTES: ConverterPalette[] = C64_PALETTES;
 
 function buildPaletteColors(hex: string[]): PaletteColor[] {
   return hex.map(h => {
@@ -156,7 +127,11 @@ export const CONVERTER_DEFAULTS: ConverterSettings = {
 };
 
 export const CONVERTER_PRESETS = [
-  { id: 'robs-favorite', name: "Rob's Favorite", ...CONVERTER_DEFAULTS },
+  {
+    id: 'robs-favorite',
+    name: "Rob's Favorite",
+    ...CONVERTER_DEFAULTS,
+  },
   {
     id: 'true-neutral',
     name: 'True Neutral',

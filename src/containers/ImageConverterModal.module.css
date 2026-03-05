@@ -208,6 +208,36 @@
   transition: width 0.2s;
 }
 
+.previewsHeader {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.gridToggle {
+  font-size: 12px;
+  padding: 3px 10px;
+  background: #444;
+  color: #aaa;
+  border: 1px solid #666;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.gridToggle:hover {
+  background: #555;
+}
+
+.gridToggleOn {
+  background: #336;
+  color: #aaf;
+  border-color: #66a;
+}
+
+.gridToggleOn:hover {
+  background: #447;
+}
+
 .previews {
   display: flex;
   gap: 12px;

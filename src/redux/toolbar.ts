@@ -182,6 +182,7 @@ const actionCreators = {
   setShowImageConverter: (flag: boolean) => createAction('Toolbar/SET_SHOW_IMAGE_CONVERTER', flag),
   setSelectedPaletteRemap: (remapIdx: number) => createAction('Toolbar/SET_SELECTED_PALETTE_REMAP', remapIdx),
   setCanvasGrid: (flag: boolean) => createAction('Toolbar/SET_CANVAS_GRID', flag),
+  setPreviewGrid: (flag: boolean) => createAction('Toolbar/SET_PREVIEW_GRID', flag),
   setShowColorModeLabels: (flag: boolean) => createAction('Toolbar/SET_SHOW_COLOR_MODE_LABELS', flag),
   setShortcutsActive: (flag: boolean) => createAction('Toolbar/SET_SHORTCUTS_ACTIVE', flag),
   setNewScreenSize: (dims: { width: number, height: number }) => createAction('Toolbar/SET_NEW_SCREEN_SIZE', dims)
@@ -566,6 +567,7 @@ export class Toolbar {
       showImageConverter: false,
       selectedPaletteRemap: 0,
       canvasGrid: false,
+      previewGrid: false,
       showColorModeLabels: true,
       shortcutsActive: true,
       newScreenSize: { width: DEFAULT_FB_WIDTH, height: DEFAULT_FB_HEIGHT },
@@ -702,6 +704,8 @@ export class Toolbar {
         return updateField(state, 'selectedPaletteRemap', action.data);
       case 'Toolbar/SET_CANVAS_GRID':
         return updateField(state, 'canvasGrid', action.data);
+      case 'Toolbar/SET_PREVIEW_GRID':
+        return updateField(state, 'previewGrid', action.data);
       case 'Toolbar/SET_SHOW_COLOR_MODE_LABELS':
         return updateField(state, 'showColorModeLabels', action.data);
       case 'Toolbar/SET_SHORTCUTS_ACTIVE':

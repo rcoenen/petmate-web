@@ -153,6 +153,7 @@ export default function MenuBar() {
   const navRef = React.useRef<HTMLElement>(null);
   const crtFilter = useSelector((state: RootState) => getSettingsCrtFilter(state));
   const showColorModeLabels = useSelector((state: RootState) => state.toolbar.showColorModeLabels);
+  const canvasGrid = useSelector((state: RootState) => state.toolbar.canvasGrid);
   const ecmMode = useSelector((state: RootState) => {
     const fb = selectors.getCurrentFramebuf(state);
     return fb?.ecmMode ?? false;
@@ -198,6 +199,8 @@ export default function MenuBar() {
 
   const displayItems: ItemDef[] = [
     { label: 'CRT Filter', submenu: crtSubmenu },
+    { separator: true },
+    { label: `${canvasGrid ? '\u2022 ' : '  '}Show Grid`, cmd: 'toggle-preview-grid' },
     { separator: true },
     { label: 'Color Mode Labels', submenu: [
       { label: `${showColorModeLabels ? '\u2022 ' : '  '}Show`, cmd: 'toggle-color-mode-labels' },

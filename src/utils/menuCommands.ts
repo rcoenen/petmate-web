@@ -128,6 +128,11 @@ export function dispatchMenuCommand(
       dispatch(settingsActions.saveEdits());
       return;
     }
+    case 'toggle-preview-grid': {
+      const current = getState().toolbar.canvasGrid;
+      dispatch(Toolbar.actions.setCanvasGrid(!current));
+      return;
+    }
     case 'toggle-color-mode-labels': {
       const current = getState().toolbar.showColorModeLabels;
       dispatch(Toolbar.actions.setShowColorModeLabels(!current));

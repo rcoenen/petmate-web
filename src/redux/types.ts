@@ -128,6 +128,7 @@ export interface Toolbar {
   showImageConverter: boolean;
   selectedPaletteRemap: number;
   canvasGrid: boolean;
+  previewGrid: boolean;
   showColorModeLabels: boolean;
   shortcutsActive: boolean;
 

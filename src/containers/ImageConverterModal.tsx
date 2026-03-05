@@ -230,32 +230,39 @@ export default function ImageConverterModal() {
   if (!show) return null;
 
   return (
-    <Modal showModal={show} width={720}>
+    <Modal showModal={show} width={1020}>
       <div className={styles.container}>
         <h3 className={styles.title}>Convert Image to PETSCII</h3>
 
-        {/* File Selection */}
-        <div
-          className={styles.dropZone}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onClick={handleFileSelect}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".png,.jpg,.jpeg,.gif,.webp"
-            onChange={handleFileChange}
-            style={{ display: 'none' }}
-          />
-          {fileName
-            ? <span>{fileName}</span>
-            : <span>Click to select image or drag &amp; drop</span>
-          }
-        </div>
+        <div className={styles.topRow}>
+          {/* File Selection / Reference Image */}
+          <div className={styles.dropZoneWrapper}>
+            <div
+              className={`${styles.dropZone} ${image ? styles.dropZoneHasImage : ''}`}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onClick={handleFileSelect}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".png,.jpg,.jpeg,.gif,.webp"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+              />
+              {image
+                ? <img src={image.src} className={styles.dropZoneImage} alt="Source" />
+                : <span>Click to select image or drag &amp; drop</span>
+              }
+            </div>
+            <div className={styles.dropZoneHeading}>
+              {image ? `Source: ${fileName}` : 'Source Image'}
+            </div>
+          </div>
 
-        {/* Settings */}
-        <div className={styles.settings}>
+          {/* Settings */}
+          <fieldset className={styles.settings}>
+            <legend>Conversion Settings</legend>
           <div className={styles.settingsRow}>
             <label>Preset:</label>
             <select
@@ -311,9 +318,13 @@ export default function ImageConverterModal() {
             <span className={styles.value}>{settings.lumMatchWeight}</span>
           </div>
 
-          <div className={styles.settingsRow}>
-            <label>Palette:</label>
+          </fieldset>
+
+          {/* Palette & Background */}
+          <fieldset className={styles.bgPanel}>
+            <legend>Palette</legend>
             <select
+              className={styles.paletteSelect}
               value={settings.paletteId}
               onChange={(e) => updateSetting('paletteId', e.target.value)}
             >
@@ -321,10 +332,7 @@ export default function ImageConverterModal() {
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
-          </div>
-
-          <div className={styles.settingsRow}>
-            <label>Background:</label>
+            <div className={styles.bgPanelLabel}>Background</div>
             <div className={styles.bgSwatches}>
               <button
                 className={`${styles.bgAuto} ${settings.manualBgColor === null ? styles.active : ''}`}
@@ -340,7 +348,7 @@ export default function ImageConverterModal() {
                 />
               ))}
             </div>
-          </div>
+          </fieldset>
         </div>
 
         {/* Progress */}

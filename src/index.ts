@@ -13,6 +13,7 @@ import { Toolbar } from './redux/toolbar';
 import configureStore from './store/configureStore';
 import { loadAssets } from './utils/assetLoader';
 import { startAutoSave, loadAutoSave, clearAutoSave } from './utils/autoSave';
+import { loadUIState, startUIStatePersistence } from './utils/uiState';
 
 async function main() {
   await loadAssets();
@@ -34,6 +35,19 @@ async function main() {
   }
   dispatch(ReduxRoot.actions.updateLastSavedSnapshot());
   loadSettings((j: any) => dispatch(settings.actions.load(j)));
+
+  // Restore last active screen and tool
+  const uiState = loadUIState();
+  if (uiState) {
+    const numScreens = store.getState().screens.list.length;
+    if (uiState.screenIndex >= 0 && uiState.screenIndex < numScreens) {
+      dispatch(Screens.actions.setCurrentScreenIndex(uiState.screenIndex));
+    }
+    dispatch(Toolbar.actions.setSelectedTool(uiState.selectedTool));
+  }
+
+  // Persist active screen and tool on change
+  startUIStatePersistence(store.getState as any, store.subscribe);
 
   // Periodic auto-save
   startAutoSave(store.getState as any, store.subscribe);

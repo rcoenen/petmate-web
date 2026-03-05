@@ -7,6 +7,7 @@ import {
   EditSaved,
   EditBranch,
   PaletteName,
+  CrtFilter,
   RootState,
   SettingsJson
 } from './types'
@@ -20,13 +21,15 @@ const SAVE_EDITS = 'SAVE_EDITS'
 const CANCEL_EDITS = 'CANCEL_EDITS'
 const SET_SELECTED_COLOR_PALETTE = 'SET_SELECTED_COLOR_PALETTE'
 const SET_INTEGER_SCALE = 'SET_INTEGER_SCALE'
+const SET_CRT_FILTER = 'SET_CRT_FILTER'
 
 //const CONFIG_FILE_VERSION = 1
 
 const initialState: RSettings = {
   palettes: fp.mkArray(4, () => fp.mkArray(16, i => i)),
   selectedColorPalette: 'petmate',
-  integerScale: false
+  integerScale: false,
+  crtFilter: 'none' as CrtFilter
 }
 
 const SETTINGS_KEY = 'petmate-settings';
@@ -52,7 +55,8 @@ function fromJson(json: SettingsJson): RSettings {
   return {
     palettes: json.palettes === undefined ? init.palettes : json.palettes,
     selectedColorPalette: json.selectedColorPalette === undefined ? init.selectedColorPalette : json.selectedColorPalette,
-    integerScale: fp.maybeDefault(json.integerScale, false)
+    integerScale: fp.maybeDefault(json.integerScale, false),
+    crtFilter: fp.maybeDefault(json.crtFilter, 'none')
   }
 }
 
@@ -83,13 +87,18 @@ interface SetIntegerScaleArgs extends BranchArgs {
   scale: boolean;
 }
 
+interface SetCrtFilterArgs extends BranchArgs {
+  crtFilter: CrtFilter;
+}
+
 const actionCreators = {
   load: (data: SettingsJson) => createAction(LOAD, fromJson(data)),
   saveEditsAction: () => createAction(SAVE_EDITS),
   cancelEdits: () => createAction(CANCEL_EDITS),
   setPalette: (data: SetPaletteArgs) => createAction(SET_PALETTE, data),
   setSelectedColorPaletteName: (data: SetSelectedColorPaletteNameArgs) => createAction(SET_SELECTED_COLOR_PALETTE, data),
-  setIntegerScale: (data: SetIntegerScaleArgs) => createAction(SET_INTEGER_SCALE, data)
+  setIntegerScale: (data: SetIntegerScaleArgs) => createAction(SET_INTEGER_SCALE, data),
+  setCrtFilter: (data: SetCrtFilterArgs) => createAction(SET_CRT_FILTER, data)
 };
 
 type Actions = ActionsUnion<typeof actionCreators>
@@ -153,6 +162,11 @@ export function reducer(
     case SET_SELECTED_COLOR_PALETTE: {
       return updateBranch(state, action.data.branch, {
         selectedColorPalette: action.data.name
+      });
+    }
+    case SET_CRT_FILTER: {
+      return updateBranch(state, action.data.branch, {
+        crtFilter: action.data.crtFilter
       });
     }
     default:

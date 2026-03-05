@@ -7,6 +7,7 @@ import ColorPicker from '../components/ColorPicker'
 import CharGrid from '../components/CharGrid'
 import CharPosOverlay, { TextCursorOverlay } from '../components/CharPosOverlay'
 import GridOverlay from '../components/GridOverlay'
+import CrtOverlay from '../components/CrtOverlay'
 import { CanvasStatusbar } from '../components/Statusbar'
 
 import CharSelect from './CharSelect'
@@ -18,7 +19,8 @@ import * as screensSelectors from '../redux/screensSelectors'
 import {
   getSettingsPaletteRemap,
   getSettingsCurrentColorPalette,
-  getSettingsIntegerScale
+  getSettingsIntegerScale,
+  getSettingsCrtFilter
 } from '../redux/settingsSelectors'
 
 
@@ -38,6 +40,7 @@ import {
   Brush,
   Font,
   Tool,
+  CrtFilter,
   Pixel, Framebuf, FramebufUIState
 } from '../redux/types'
 
@@ -737,7 +740,7 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
             colorPalette={this.props.colorPalette}
           />
           {overlays}
-          {this.props.canvasGrid ? <GridOverlay width={charWidth} height={charHeight} color={gridColor}   /> : null}
+          {this.props.canvasGrid ? <GridOverlay width={charWidth} height={charHeight} color={gridColor} /> : null}
         </div>
       </div>
     )
@@ -831,6 +834,7 @@ interface EditorProps {
   colorPalette: Rgb[];
   paletteRemap: number[];
   selectedTool: Tool;
+  crtFilter: CrtFilter;
 
   integerScale: boolean;
   containerSize: { width: number, height: number };
@@ -876,12 +880,20 @@ class Editor extends Component<EditorProps & EditorDispatch> {
       canvasFit: this.props.framebufUIState.canvasFit
     });
 
-    const framebufStyle = {
+    const { crtFilter } = this.props;
+    const useCrt = crtFilter !== 'none' && crtFilter !== 'scanlines';
+    const framebufStyle: CSSProperties = {
       width: `${framebufSize.width}px`,
       height: `${framebufSize.height}px`,
       borderColor: borderColor,
       borderStyle: 'solid',
-      borderWidth: `${16}px` // TODO scale border width
+      borderWidth: `${16}px`, // TODO scale border width
+      imageRendering: useCrt ? 'auto' : undefined,
+      filter: crtFilter === 'colorTv'
+        ? 'brightness(1.2) contrast(1.2)'
+        : crtFilter === 'bwTv'
+          ? 'brightness(1.4) contrast(1.2) grayscale(1)'
+          : undefined,
     };
     const scaleX = 1.8;
     const scaleY = scaleX;
@@ -901,6 +913,11 @@ class Editor extends Component<EditorProps & EditorDispatch> {
                 framebufUIState={this.props.framebufUIState}
                 onCharPosChanged={this.handleCharPosChanged} /> :
               null}
+            <CrtOverlay
+              width={framebufSize.width}
+              height={framebufSize.height}
+              filter={crtFilter}
+            />
           </div>
           <CanvasStatusbar
             framebuf={this.props.framebuf}
@@ -937,6 +954,7 @@ export default connect(
       paletteRemap: getSettingsPaletteRemap(state),
       colorPalette: getSettingsCurrentColorPalette(state),
       integerScale: getSettingsIntegerScale(state),
+      crtFilter: getSettingsCrtFilter(state),
       framebufUIState: selectors.getFramebufUIState(state, framebufIndex)
     }
   },

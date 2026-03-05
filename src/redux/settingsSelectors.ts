@@ -33,6 +33,11 @@ export const getSettingsIntegerScale = (state: RootState) => {
   return settings.integerScale
 }
 
+export const getSettingsCrtFilter = (state: RootState) => {
+  const settings = getSettings(state)
+  return settings.crtFilter
+}
+
 export const getSettingsEditingCurrentColorPalette = (state: RootState) => {
   const settings = getSettingsEditing(state)
   return getSettingsColorPaletteByName(state, settings.selectedColorPalette)

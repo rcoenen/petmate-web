@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useDispatch, useStore } from 'react-redux';
+import { useDispatch, useSelector, useStore } from 'react-redux';
 import { dispatchMenuCommand } from '../utils/menuCommands';
+import { getSettingsCrtFilter } from '../redux/settingsSelectors';
+import { RootState } from '../redux/types';
 import s from './MenuBar.module.css';
 
 interface MenuItemDef {
@@ -78,6 +80,10 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
     ],
   },
   {
+    label: 'Display',
+    items: [], // populated dynamically with CRT filter state
+  },
+  {
     label: 'Help',
     items: [
       { label: 'Documentation', href: 'https://nurpax.github.io/petmate/' },
@@ -145,6 +151,7 @@ export default function MenuBar() {
   const dispatch = useDispatch();
   const store = useStore();
   const navRef = React.useRef<HTMLElement>(null);
+  const crtFilter = useSelector((state: RootState) => getSettingsCrtFilter(state));
 
   const handleCommand = useCallback((cmd: string) => {
     setOpenMenu(null);
@@ -163,9 +170,20 @@ export default function MenuBar() {
     return () => document.removeEventListener('mousedown', close);
   }, [openMenu]);
 
+  const crtItems: ItemDef[] = [
+    { label: `${crtFilter === 'none' ? '\u2022 ' : '  '}Normal`, cmd: 'crt-none' },
+    { label: `${crtFilter === 'scanlines' ? '\u2022 ' : '  '}Scanlines`, cmd: 'crt-scanlines' },
+    { label: `${crtFilter === 'colorTv' ? '\u2022 ' : '  '}Color TV`, cmd: 'crt-colorTv' },
+    { label: `${crtFilter === 'bwTv' ? '\u2022 ' : '  '}B&W TV`, cmd: 'crt-bwTv' },
+  ];
+
+  const menus = menuDefs.map(menu =>
+    menu.label === 'Display' ? { ...menu, items: crtItems } : menu
+  );
+
   return (
     <nav className={s.menuBar} ref={navRef}>
-      {menuDefs.map((menu, i) => (
+      {menus.map((menu, i) => (
         <div key={i} className={s.menu}>
           <button
             className={`${s.menuButton} ${openMenu === i ? s.menuButtonActive : ''}`}

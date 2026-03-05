@@ -62,6 +62,8 @@ export interface BrushRegion {
 
 export type Brush = any;
 
+export type CrtFilter = 'none' | 'scanlines' | 'colorTv' | 'bwTv';
+
 export type PaletteName = 'petmate' | 'colodore' | 'pepto' | 'vice';
 
 export type EditBranch = 'saved' | 'editing';
@@ -74,6 +76,7 @@ export interface Settings {
   palettes: number[][];
   selectedColorPalette: PaletteName;
   integerScale: boolean;
+  crtFilter: CrtFilter;
 };
 
 export interface Screens {

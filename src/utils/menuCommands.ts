@@ -2,7 +2,8 @@ import { formats, promptProceedWithUnsavedChanges } from './index';
 import * as Screens from '../redux/screens';
 import * as ReduxRoot from '../redux/root';
 import { Toolbar } from '../redux/toolbar';
-import { FileFormat, RootState } from '../redux/types';
+import { actions as settingsActions } from '../redux/settings';
+import { FileFormat, CrtFilter, RootState } from '../redux/types';
 
 type StoreDispatch = any;
 type GetState = () => RootState;
@@ -109,6 +110,16 @@ export function dispatchMenuCommand(
     case 'custom-fonts':
       dispatch(Toolbar.actions.setShowCustomFonts(true));
       return;
+    case 'crt-none':
+    case 'crt-scanlines':
+    case 'crt-colorTv':
+    case 'crt-bwTv': {
+      const crtFilter = command.replace('crt-', '') as CrtFilter;
+      dispatch(settingsActions.setCrtFilter({ branch: 'saved', crtFilter }));
+      dispatch(settingsActions.setCrtFilter({ branch: 'editing', crtFilter }));
+      dispatch(settingsActions.saveEdits());
+      return;
+    }
     default:
       console.warn('unknown menu command:', command);
   }

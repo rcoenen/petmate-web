@@ -135,6 +135,18 @@
   box-sizing: border-box;
 }
 
+.ghLink {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #6a9fd8;
+  text-decoration: none;
+}
+
+.ghLink:hover {
+  text-decoration: underline;
+}
+
+.fullscreen .ghLink,
 .fullscreen .logo,
 .fullscreen .header,
 .fullscreen .controls,

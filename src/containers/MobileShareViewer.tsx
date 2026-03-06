@@ -313,6 +313,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
         40x25 · {mode}
       </div>
       <p className={s.notice}>Mobile viewer only. Open this link on a desktop browser to use the full editor.</p>
+      <a className={s.ghLink} href="https://github.com/rcoenen/Petsciishop" target="_blank" rel="noopener noreferrer">github.com/rcoenen/Petsciishop</a>
     </div>
   );
 }

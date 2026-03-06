@@ -28,6 +28,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     startMidY: number;
     startPanX: number;
     startPanY: number;
+    lastTapTime: number;
   }>({
     active: false,
     startDistance: 0,
@@ -35,7 +36,8 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     startMidX: 0,
     startMidY: 0,
     startPanX: 0,
-    startPanY: 0
+    startPanY: 0,
+    lastTapTime: 0,
   });
 
   const palette = useMemo(() => getColorPaletteById('colodore'), []);
@@ -136,9 +138,18 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       e.preventDefault();
     };
 
-    const onTouchEnd = () => {
+    const onTouchEnd = (e: TouchEvent) => {
       if (gestureRef.current.active) {
         gestureRef.current.active = false;
+        return;
+      }
+      // Double-tap to exit fullscreen (single finger only)
+      if (e.touches.length === 0 && e.changedTouches.length === 1) {
+        const now = Date.now();
+        if (now - gestureRef.current.lastTapTime < 300) {
+          document.exitFullscreen();
+        }
+        gestureRef.current.lastTapTime = now;
       }
     };
 
@@ -218,7 +229,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
           {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
         </button>
       </div>
-      <div ref={canvasWrapRef} className={s.canvasWrap}>
+      <div ref={canvasWrapRef} className={s.canvasWrap} onDoubleClick={isFullscreen ? toggleFullscreen : undefined}>
         <canvas
           ref={canvasRef}
           className={canvasClass}

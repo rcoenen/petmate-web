@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
-import { Framebuf, FramebufWithFont, CrtFilter } from '../redux/types';
+import { Framebuf, FramebufWithFont } from '../redux/types';
 import { getColorPaletteById } from '../utils/palette';
 import { getROMFontBits } from '../redux/selectors';
 import { framebufToPixels, computeOutputImageDims } from '../utils/exporters/util';
@@ -14,7 +14,6 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const [crtFilter, setCrtFilter] = useState<CrtFilter>('none');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLandscape, setIsLandscape] = useState(window.matchMedia('(orientation: landscape)').matches);
   const [zoom, setZoom] = useState(1);
@@ -258,11 +257,6 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
 
   const mode = framebuf.mcmMode ? 'MCM' : framebuf.ecmMode ? 'ECM' : 'Standard';
   const screenName = framebuf.name && framebuf.name.trim() ? framebuf.name.trim() : 'Shared Screen';
-  const canvasClass = [
-    s.canvas,
-    crtFilter === 'colorTv' ? s.crtColorTv : '',
-    crtFilter === 'bwTv' ? s.crtBwTv : ''
-  ].filter(Boolean).join(' ');
   // In fullscreen, compute canvas size to fill viewport while preserving aspect ratio
   const canvasStyle = useMemo(() => {
     if (!isFullscreen) return undefined;
@@ -284,17 +278,6 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
         <p className={s.subtitle}>Read-only mobile viewer</p>
       </div>
       <div className={s.controls}>
-        <span className={s.controlsLabel}>CRT mode:</span>
-        <select
-          className={s.select}
-          value={crtFilter}
-          onChange={(e) => setCrtFilter(e.target.value as CrtFilter)}
-        >
-          <option value='none'>Normal</option>
-          <option value='scanlines'>Scanlines</option>
-          <option value='colorTv'>Color TV</option>
-          <option value='bwTv'>B&W TV</option>
-        </select>
         <button className={s.button} onClick={toggleFullscreen}>
           {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
         </button>
@@ -302,16 +285,16 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       <div ref={canvasWrapRef} className={s.canvasWrap} onDoubleClick={toggleFullscreen}>
         <canvas
           ref={canvasRef}
-          className={canvasClass}
+          className={s.canvas}
           style={canvasStyle}
           width={dims.imgWidth}
           height={dims.imgHeight}
         />
-        {crtFilter !== 'none' && <div className={s.scanlines} />}
       </div>
       <div className={s.meta}>
         40x25 · {mode}
       </div>
+      <p className={s.about}>PETSCII art is old-school 8-bit graphics from the Commodore 64 — 40x25 characters, 16 colors, made entirely with the keyboard. No pixels, just characters.</p>
       <p className={s.notice}>Mobile viewer only. Open this link on a desktop browser to use the full editor.</p>
       <a className={s.ghLink} href="https://github.com/rcoenen/Petsciishop" target="_blank" rel="noopener noreferrer">github.com/rcoenen/Petsciishop</a>
     </div>

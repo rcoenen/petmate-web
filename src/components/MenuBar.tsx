@@ -44,6 +44,29 @@ const exporters: MenuItemDef[] = [
   { label: 'Screen Designer (.sdd)', cmd: 'export-sdd' },
 ];
 
+const petsciiCompo25Entries: MenuItemDef[] = [
+  { label: '01 Graces', cmd: 'load-demo-sdd:petscii-compo-25/01_graces.sdd' },
+  { label: '02 Future Proof', cmd: 'load-demo-sdd:petscii-compo-25/02_FutureProof.sdd' },
+  { label: '03 ATROTOS', cmd: 'load-demo-sdd:petscii-compo-25/03_ATROTOS.sdd' },
+  { label: '04 The Milkshake Man', cmd: 'load-demo-sdd:petscii-compo-25/04_TheMilkshakeManPet-msm.sdd' },
+  { label: '05 Shady Chars', cmd: 'load-demo-sdd:petscii-compo-25/05_ShadyChars.sdd' },
+  { label: '06 Missing Something', cmd: 'load-demo-sdd:petscii-compo-25/06_plain.sdd' },
+  { label: '07 The Race', cmd: 'load-demo-sdd:petscii-compo-25/07_theracemyd.sdd' },
+  { label: '08 CPU END', cmd: 'load-demo-sdd:petscii-compo-25/08_CPUend.sdd' },
+  { label: '09 Technomancy', cmd: 'load-demo-sdd:petscii-compo-25/09_Technomancy_Skleptoid.sdd' },
+  { label: '10 Hohenzollern', cmd: 'load-demo-sdd:petscii-compo-25/10_hohenzollern.sdd' },
+  { label: '11 I C U', cmd: 'load-demo-sdd:petscii-compo-25/11_TRIAD-ICU.sdd' },
+  { label: '12 I Yam What I Yam', cmd: 'load-demo-sdd:petscii-compo-25/12_I_yam_what_I_yam.sdd' },
+  { label: '13 Sloot Compiler', cmd: 'load-demo-sdd:petscii-compo-25/13_TRIAD-Sloot.sdd' },
+  { label: '14 Cathode Ray Mission', cmd: 'load-demo-sdd:petscii-compo-25/14_cathode_ray_mission_ldx40.sdd' },
+  { label: '15 Whoo Hoo!', cmd: 'load-demo-sdd:petscii-compo-25/15_whohoo_myd.sdd' },
+  { label: '16 Homage a Otl Aicher', cmd: 'load-demo-sdd:petscii-compo-25/16_otl_aicher.sdd' },
+  { label: '17 Rain!', cmd: 'load-demo-sdd:petscii-compo-25/17_rain.sdd' },
+  { label: '18 Who Ya Gonna Call?', cmd: 'load-demo-sdd:petscii-compo-25/18_who_ya_gonna_call.sdd' },
+  { label: '19 ...but I found it in time!', cmd: 'load-demo-sdd:petscii-compo-25/19_plain2.sdd' },
+  { label: '20 Mallorca', cmd: 'load-demo-sdd:petscii-compo-25/20_Mallorca.sdd' },
+];
+
 const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
   {
     label: 'Petsciishop',
@@ -53,6 +76,7 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
       { label: 'Demo', submenu: [
         { label: 'Petsciishop Logo', cmd: 'load-demo-logo' },
         { label: 'The Three Graces', cmd: 'load-demo-three-graces' },
+        { label: "PETSCII Compo '25", submenu: petsciiCompo25Entries },
       ]},
     ],
   },
@@ -102,53 +126,44 @@ interface DropdownProps {
 }
 
 function Dropdown({ items, onCommand }: DropdownProps) {
+  const renderMenuItems = (menuItems: ItemDef[], keyPrefix = ''): React.ReactNode =>
+    menuItems.map((item, i) => {
+      const key = `${keyPrefix}${i}`;
+      if (isSep(item)) {
+        return <li key={key} className={s.separator} />;
+      }
+      if (item.heading) {
+        return <li key={key} className={s.heading}>{item.label}</li>;
+      }
+      const hasSubmenu = item.submenu && item.submenu.length > 0;
+      return (
+        <li
+          key={key}
+          className={s.item}
+          onClick={(e) => {
+            if (hasSubmenu) return;
+            e.stopPropagation();
+            if (item.cmd) onCommand(item.cmd);
+            if (item.href) window.open(item.href, '_blank');
+          }}
+        >
+          <span>{item.label}</span>
+          <span>
+            {item.accelerator && <span className={s.accelerator}>{item.accelerator}</span>}
+            {hasSubmenu && <span className={s.arrow}>▶</span>}
+          </span>
+          {hasSubmenu && (
+            <ul className={s.submenu}>
+              {renderMenuItems(item.submenu!, `${key}-`)}
+            </ul>
+          )}
+        </li>
+      );
+    });
+
   return (
     <ul className={s.dropdown}>
-      {items.map((item, i) => {
-        if (isSep(item)) {
-          return <li key={i} className={s.separator} />;
-        }
-        if (item.heading) {
-          return <li key={i} className={s.heading}>{item.label}</li>;
-        }
-        const hasSubmenu = item.submenu && item.submenu.length > 0;
-        return (
-          <li
-            key={i}
-            className={s.item}
-            onClick={() => {
-              if (!hasSubmenu && item.cmd) onCommand(item.cmd);
-              if (!hasSubmenu && item.href) window.open(item.href, '_blank');
-            }}
-          >
-            <span>{item.label}</span>
-            <span>
-              {item.accelerator && <span className={s.accelerator}>{item.accelerator}</span>}
-              {hasSubmenu && <span className={s.arrow}>▶</span>}
-            </span>
-            {hasSubmenu && (
-              <ul className={s.submenu}>
-                {item.submenu!.map((sub, j) =>
-                  isSep(sub) ? (
-                    <li key={j} className={s.separator} />
-                  ) : (
-                    <li
-                      key={j}
-                      className={s.item}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (sub.cmd) onCommand(sub.cmd);
-                      }}
-                    >
-                      <span>{sub.label}</span>
-                    </li>
-                  )
-                )}
-              </ul>
-            )}
-          </li>
-        );
-      })}
+      {renderMenuItems(items)}
     </ul>
   );
 }

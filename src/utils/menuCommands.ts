@@ -21,6 +21,17 @@ export function dispatchMenuCommand(
   dispatch: StoreDispatch,
   getState: GetState
 ) {
+  if (command.startsWith('load-demo-sdd:')) {
+    const relativePath = command.slice('load-demo-sdd:'.length);
+    fetch(import.meta.env.BASE_URL + `demo/${relativePath}`)
+      .then(r => r.text())
+      .then(text => {
+        const framebufs = loadSDD(text);
+        dispatch(ReduxRoot.actions.importFramebufsAppend(framebufs));
+      });
+    return;
+  }
+
   switch (command) {
     case 'about':
       dispatch(Toolbar.actions.setShowAbout(true));

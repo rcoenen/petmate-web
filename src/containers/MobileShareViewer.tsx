@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { Framebuf, FramebufWithFont } from '../redux/types';
 import { getColorPaletteById } from '../utils/palette';
+import { C64_PALETTES } from '../utils/c64Palettes';
 import { getROMFontBits } from '../redux/selectors';
 import { framebufToPixels, computeOutputImageDims } from '../utils/exporters/util';
 import { CHARSET_LOWER, CHARSET_UPPER } from '../redux/editor';
@@ -18,6 +19,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
   const [isLandscape, setIsLandscape] = useState(window.matchMedia('(orientation: landscape)').matches);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [paletteId, setPaletteId] = useState('colodore');
 
   const gestureRef = useRef<{
     active: boolean;
@@ -39,7 +41,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     lastTapTime: 0,
   });
 
-  const palette = useMemo(() => getColorPaletteById('colodore'), []);
+  const palette = useMemo(() => getColorPaletteById(paletteId), [paletteId]);
   const font = useMemo(() => {
     const charset = framebuf.charset === CHARSET_LOWER ? CHARSET_LOWER : CHARSET_UPPER;
     return getROMFontBits(charset);
@@ -278,6 +280,11 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
         <p className={s.subtitle}>Read-only mobile viewer</p>
       </div>
       <div className={s.controls}>
+        <select className={s.select} value={paletteId} onChange={e => setPaletteId(e.target.value)}>
+          {C64_PALETTES.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
         <button className={s.button} onClick={toggleFullscreen}>
           {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
         </button>

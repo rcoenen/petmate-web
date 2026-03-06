@@ -9,6 +9,14 @@
   box-sizing: border-box;
 }
 
+.logo {
+  height: 32px;
+  width: auto;
+  margin-bottom: 12px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
 .header {
   width: 100%;
   max-width: 520px;
@@ -127,6 +135,7 @@
   box-sizing: border-box;
 }
 
+.fullscreen .logo,
 .fullscreen .header,
 .fullscreen .controls,
 .fullscreen .meta,

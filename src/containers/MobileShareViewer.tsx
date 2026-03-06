@@ -278,6 +278,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
 
   return (
     <div ref={rootRef} className={`${s.page} ${isLandscape ? s.landscape : ''} ${isFullscreen ? s.fullscreen : ''}`}>
+      <img src={`${import.meta.env.BASE_URL}assets/petsciishop_logo.png`} alt="Petsciishop" className={s.logo} />
       <div className={s.header}>
         <h1 className={s.title}>{screenName}</h1>
         <p className={s.subtitle}>Read-only mobile viewer</p>

@@ -16,3 +16,67 @@
 .fbContainer.inspector {
   cursor: crosshair;
 }
+
+.modeBadge {
+  font-size: 0.75em;
+  color: rgb(160, 160, 160);
+  margin-bottom: 6px;
+}
+
+.colorTargets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.colorTarget {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  color: rgb(190, 190, 190);
+  cursor: pointer;
+}
+
+.colorTarget:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.colorTargetActive {
+  border-color: rgba(0, 255, 255, 0.75);
+  background: rgba(0, 255, 255, 0.08);
+}
+
+.colorSwatch {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}
+
+.colorTargetText {
+  min-width: 0;
+}
+
+.colorTargetLabel {
+  font-size: 0.62em;
+  line-height: 1.05;
+  white-space: normal;
+}
+
+.colorTargetReg {
+  font-size: 0.56em;
+  color: rgb(135, 135, 135);
+  line-height: 1.05;
+  white-space: normal;
+}
+
+.modeHint {
+  font-size: 0.62em;
+  color: rgb(145, 145, 145);
+  margin-bottom: 8px;
+}

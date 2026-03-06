@@ -19,7 +19,8 @@ import { Toolbar } from './toolbar';
 
 import {
   RootState,
-  Screens
+  Screens,
+  ColorMode
 } from './types'
 import { ActionsUnion, createAction, DispatchPropsFromActions } from './typeUtils'
 
@@ -86,7 +87,47 @@ function cloneScreen(index: number): ThunkAction<void, RootState, undefined, Act
   }
 }
 
-function newScreen(): ThunkAction<void, RootState, undefined, Action> {
+function modeFieldsFor(mode: ColorMode, prev?: ReturnType<typeof selectors.getCurrentFramebuf>) {
+  if (mode === 'mcm') {
+    return {
+      ecmMode: false,
+      mcmMode: true,
+      extBgColor1: prev?.extBgColor1 ?? 0,
+      extBgColor2: prev?.extBgColor2 ?? 0,
+      extBgColor3: prev?.extBgColor3 ?? 0,
+      mcmColor1: prev?.mcmColor1 ?? 0,
+      mcmColor2: prev?.mcmColor2 ?? 7
+    };
+  }
+  if (mode === 'ecm') {
+    return {
+      ecmMode: true,
+      mcmMode: false,
+      extBgColor1: prev?.extBgColor1 ?? 0,
+      extBgColor2: prev?.extBgColor2 ?? 0,
+      extBgColor3: prev?.extBgColor3 ?? 0,
+      mcmColor1: prev?.mcmColor1 ?? 0,
+      mcmColor2: prev?.mcmColor2 ?? 7
+    };
+  }
+  return {
+    ecmMode: false,
+    mcmMode: false,
+    extBgColor1: prev?.extBgColor1 ?? 0,
+    extBgColor2: prev?.extBgColor2 ?? 0,
+    extBgColor3: prev?.extBgColor3 ?? 0,
+    mcmColor1: prev?.mcmColor1 ?? 0,
+    mcmColor2: prev?.mcmColor2 ?? 7
+  };
+}
+
+function getModeFromFramebuf(framebuf: ReturnType<typeof selectors.getCurrentFramebuf>): ColorMode {
+  if (framebuf?.mcmMode) return 'mcm';
+  if (framebuf?.ecmMode) return 'ecm';
+  return 'std';
+}
+
+function newScreen(mode?: ColorMode): ThunkAction<void, RootState, undefined, Action> {
   return (dispatch, getState) => {
     const state = getState()
     let colors = {
@@ -94,6 +135,8 @@ function newScreen(): ThunkAction<void, RootState, undefined, Action> {
       borderColor: DEFAULT_BORDER_COLOR
     }
     const framebuf = selectors.getCurrentFramebuf(state);
+    const resolvedMode = mode ?? getModeFromFramebuf(framebuf);
+    let modeFields = modeFieldsFor(resolvedMode, framebuf);
     if (framebuf !== null) {
       colors = {
         backgroundColor: framebuf.backgroundColor,
@@ -109,6 +152,7 @@ function newScreen(): ThunkAction<void, RootState, undefined, Action> {
       }
       dispatch(Framebuffer.actions.setFields({
         ...colors,
+        ...modeFields,
         name: makeScreenName(newFramebufIdx)
       }, newFramebufIdx))
     })

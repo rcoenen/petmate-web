@@ -3,7 +3,7 @@ import { bindActionCreators, Dispatch } from 'redux'
 
 import { Framebuffer } from './editor'
 import * as Screens from './screens'
-import { Toolbar as IToolbar, Transform, RootStateThunk, Coord2, Pixel, BrushRegion, Font, Brush, Tool, Angle360, FramebufUIState, DEFAULT_FB_WIDTH, DEFAULT_FB_HEIGHT } from './types'
+import { Toolbar as IToolbar, Transform, RootStateThunk, Coord2, Pixel, BrushRegion, Font, Brush, Tool, Angle360, FramebufUIState, DEFAULT_FB_WIDTH, DEFAULT_FB_HEIGHT, NewModeTarget } from './types'
 
 import * as selectors from './selectors'
 import * as screensSelectors from '../redux/screensSelectors'
@@ -172,6 +172,8 @@ const actionCreators = {
   setShiftKey: (flag: boolean) => createAction('Toolbar/SET_SHIFT_KEY', flag),
   setSpacebarKey: (flag: boolean) => createAction('Toolbar/SET_SPACEBAR_KEY', flag),
   setShowAbout: (flag: boolean) => createAction('Toolbar/SET_SHOW_ABOUT', flag),
+  setShowNewDocumentMode: (flag: boolean) => createAction('Toolbar/SET_SHOW_NEW_DOCUMENT_MODE', flag),
+  setNewModeTarget: (target: NewModeTarget) => createAction('Toolbar/SET_NEW_MODE_TARGET', target),
   setShowResetConfirm: (flag: boolean) => createAction('Toolbar/SET_SHOW_RESET_CONFIRM', flag),
   setShowSettings: (flag: boolean) => createAction('Toolbar/SET_SHOW_SETTINGS', flag),
   setShowCustomFonts: (flag: boolean) => createAction('Toolbar/SET_SHOW_CUSTOM_FONTS', flag),
@@ -218,7 +220,8 @@ export class Toolbar {
           showCustomFonts,
           showExport,
           showImport,
-          showImageConverter
+          showImageConverter,
+          showNewDocumentMode
         } = state.toolbar
         const noMods = !shiftKey && !metaKey && !ctrlKey
         const metaOrCtrl = metaKey || ctrlKey
@@ -228,7 +231,8 @@ export class Toolbar {
           state.toolbar.showImport.show ||
           state.toolbar.showSettings ||
           state.toolbar.showCustomFonts ||
-          state.toolbar.showImageConverter;
+          state.toolbar.showImageConverter ||
+          state.toolbar.showNewDocumentMode;
 
         if (inModal) {
           // These shouldn't early exit this function since we check for other
@@ -248,6 +252,9 @@ export class Toolbar {
             }
             if (showImageConverter) {
               dispatch(Toolbar.actions.setShowImageConverter(false));
+            }
+            if (showNewDocumentMode) {
+              dispatch(Toolbar.actions.setShowNewDocumentMode(false));
             }
           }
           return;
@@ -529,12 +536,6 @@ export class Toolbar {
       });
     },
 
-    setCurrentScreenEcmMode: (ecmMode: boolean): RootStateThunk => {
-      return dispatchForCurrentFramebuf((dispatch, framebufIndex) => {
-        dispatch(Framebuffer.actions.setEcmMode(ecmMode, framebufIndex))
-      });
-    },
-
     setCurrentFramebufUIState: (uiState: FramebufUIState): RootStateThunk => {
       return dispatchForCurrentFramebuf((dispatch, framebufIndex) => {
         dispatch(Toolbar.actions.setFramebufUIState(framebufIndex, uiState));
@@ -560,6 +561,8 @@ export class Toolbar {
       shiftKey: false,
       spacebarKey: false,
       showAbout: false,
+      showNewDocumentMode: false,
+      newModeTarget: 'workspace',
       showResetConfirm: false,
       showSettings: false,
       showCustomFonts: false,
@@ -688,6 +691,10 @@ export class Toolbar {
         return updateField(state, 'spacebarKey', action.data);
       case 'Toolbar/SET_SHOW_ABOUT':
         return updateField(state, 'showAbout', action.data);
+      case 'Toolbar/SET_SHOW_NEW_DOCUMENT_MODE':
+        return updateField(state, 'showNewDocumentMode', action.data);
+      case 'Toolbar/SET_NEW_MODE_TARGET':
+        return updateField(state, 'newModeTarget', action.data);
       case 'Toolbar/SET_SHOW_RESET_CONFIRM':
         return updateField(state, 'showResetConfirm', action.data);
       case 'Toolbar/SET_SHOW_SETTINGS':

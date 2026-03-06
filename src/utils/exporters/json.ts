@@ -30,6 +30,11 @@ function convertFb(fb: FramebufWithFont) {
     result.extBgColor2 = fb.extBgColor2 ?? 0;
     result.extBgColor3 = fb.extBgColor3 ?? 0;
   }
+  if (fb.mcmMode) {
+    result.mcmMode = true;
+    result.mcmColor1 = fb.mcmColor1 ?? 0;
+    result.mcmColor2 = fb.mcmColor2 ?? 0;
+  }
   return result;
 }
 

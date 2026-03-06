@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useDispatch, useSelector, useStore } from 'react-redux';
 import { dispatchMenuCommand } from '../utils/menuCommands';
 import { getSettingsCrtFilter } from '../redux/settingsSelectors';
-import * as selectors from '../redux/selectors';
 import { RootState } from '../redux/types';
 import s from './MenuBar.module.css';
 
@@ -76,7 +75,7 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
   },
   {
     label: 'Edit',
-    items: [], // populated dynamically with screen mode state
+    items: [], // populated dynamically
   },
   {
     label: 'Display',
@@ -159,10 +158,6 @@ export default function MenuBar() {
   const crtFilter = useSelector((state: RootState) => getSettingsCrtFilter(state));
   const showColorModeLabels = useSelector((state: RootState) => state.toolbar.showColorModeLabels);
   const canvasGrid = useSelector((state: RootState) => state.toolbar.canvasGrid);
-  const ecmMode = useSelector((state: RootState) => {
-    const fb = selectors.getCurrentFramebuf(state);
-    return fb?.ecmMode ?? false;
-  });
 
   const handleCommand = useCallback((cmd: string) => {
     setOpenMenu(null);
@@ -184,10 +179,6 @@ export default function MenuBar() {
   const editItems: ItemDef[] = [
     { label: 'Undo',         cmd: 'undo',              accelerator: 'Ctrl+Z' },
     { label: 'Redo',         cmd: 'redo',              accelerator: 'Ctrl+Y' },
-    { separator: true },
-    { label: 'Color Mode', heading: true },
-    { label: `${!ecmMode ? '\u2022 ' : '  '}Standard`, cmd: 'set-mode-standard' },
-    { label: `${ecmMode ? '\u2022 ' : '  '}ECM`, cmd: 'set-mode-ecm' },
     { separator: true },
     { label: 'Shift Left',   cmd: 'shift-screen-left',  accelerator: 'Alt+\u2190' },
     { label: 'Shift Right',  cmd: 'shift-screen-right', accelerator: 'Alt+\u2192' },

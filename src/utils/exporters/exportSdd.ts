@@ -8,6 +8,7 @@ function toHex2(n: number): string {
 export function saveSDD(fb: FramebufWithFont): string {
   const { framebuf, width, height, backgroundColor, borderColor, name } = fb;
   const isEcm = fb.ecmMode;
+  const isMcm = fb.mcmMode;
   const lines: string[] = [];
 
   lines.push('<?xml version="1.0" encoding="utf-8" standalone="yes"?>');
@@ -17,18 +18,18 @@ export function saveSDD(fb: FramebufWithFont): string {
   lines.push(`    <Rows>${height}</Rows>`);
   lines.push(`    <Columns>${width}</Columns>`);
   lines.push('    <Mode>0</Mode>');
-  lines.push(`    <ScreenMode>${isEcm ? 2 : 0}</ScreenMode>`);
+  lines.push(`    <ScreenMode>${isMcm ? 1 : isEcm ? 2 : 0}</ScreenMode>`);
   lines.push('    <CharacterSet />');
   lines.push('    <Screens>');
   lines.push('        <Screen>');
-  lines.push(`            <BK1Colour>0</BK1Colour>`);
-  lines.push(`            <BK2Colour>0</BK2Colour>`);
+  lines.push(`            <BK1Colour>${isMcm ? (fb.mcmColor1 ?? 0) : 0}</BK1Colour>`);
+  lines.push(`            <BK2Colour>${isMcm ? (fb.mcmColor2 ?? 0) : 0}</BK2Colour>`);
   lines.push(`            <M3Colour>0</M3Colour>`);
   lines.push(`            <BackgroundColour>${backgroundColor}</BackgroundColour>`);
   lines.push(`            <BorderColour>${borderColor}</BorderColour>`);
   lines.push(`            <D021Colour>${backgroundColor}</D021Colour>`);
-  lines.push(`            <D022Colour>${isEcm ? (fb.extBgColor1 ?? 0) : 0}</D022Colour>`);
-  lines.push(`            <D023Colour>${isEcm ? (fb.extBgColor2 ?? 0) : 0}</D023Colour>`);
+  lines.push(`            <D022Colour>${isEcm ? (fb.extBgColor1 ?? 0) : isMcm ? (fb.mcmColor1 ?? 0) : 0}</D022Colour>`);
+  lines.push(`            <D023Colour>${isEcm ? (fb.extBgColor2 ?? 0) : isMcm ? (fb.mcmColor2 ?? 0) : 0}</D023Colour>`);
   lines.push(`            <D024Colour>${isEcm ? (fb.extBgColor3 ?? 0) : 0}</D024Colour>`);
 
   for (let row = 0; row < height; row++) {

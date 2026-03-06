@@ -13,10 +13,12 @@ import {
   RootState,
   FileFormat,
   SettingsJson,
-  RootStateThunk
+  RootStateThunk,
+  ColorMode
 } from './types'
 import { ActionsUnion, createAction } from './typeUtils'
 import { Framebuffer } from './editor'
+import * as Screens from './screens'
 import * as settings from './settings'
 import * as workspace from './workspace'
 import * as screensSelectors from '../redux/screensSelectors'
@@ -66,6 +68,24 @@ export type Actions = ActionsUnion<typeof actionCreators>
 
 export const actions = {
   ...actionCreators,
+
+  createNewWorkspace: (mode: ColorMode): RootStateThunk => {
+    return (dispatch, _getState) => {
+      dispatch(actionCreators.resetStateAction());
+      dispatch(Toolbar.actions.setWorkspaceFilename(null));
+      dispatch(Screens.actions.newScreen(mode));
+      dispatch(actionCreators.updateLastSavedSnapshot());
+    }
+  },
+
+  importFramebufsAsNewWorkspace: (framebufs: Framebuf[]): RootStateThunk => {
+    return (dispatch, _getState) => {
+      dispatch(actionCreators.resetStateAction());
+      dispatch(Toolbar.actions.setWorkspaceFilename(null));
+      dispatch(importFramebufs(framebufs, true));
+      dispatch(actionCreators.updateLastSavedSnapshot());
+    }
+  },
 
   // Load workspace from parsed JSON data (file reading happens in dialogLoadWorkspace)
   openWorkspace: (data: any, filename?: string): RootStateThunk => {
@@ -139,9 +159,26 @@ export const actions = {
   fileImportAppend: (type: FileFormat): RootStateThunk => {
     return (dispatch, _getState) => {
       dialogImportFile(type, (framebufs: Framebuf[]) => {
-        dispatch(importFramebufs(framebufs, true));
+        dispatch(actions.importFramebufsAppend(framebufs));
       })
     }
+  },
+
+  fileImportAsNewWorkspace: (type: FileFormat): RootStateThunk => {
+    return async (dispatch, getState) => {
+      if (selectors.anyUnsavedChanges(getState())) {
+        const proceed = await showConfirm(
+          'You have unsaved changes. Import and replace the current workspace?',
+          { okLabel: 'Import', cancelLabel: 'Cancel' }
+        );
+        if (!proceed) {
+          return;
+        }
+      }
+      dialogImportFile(type, (framebufs: Framebuf[]) => {
+        dispatch(actions.importFramebufsAsNewWorkspace(framebufs));
+      });
+    };
   },
 
   fileExportAs: (fmt: FileFormat): RootStateThunk => {

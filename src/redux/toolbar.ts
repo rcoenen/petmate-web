@@ -182,6 +182,7 @@ const actionCreators = {
   setShowImageConverter: (flag: boolean) => createAction('Toolbar/SET_SHOW_IMAGE_CONVERTER', flag),
   setShowScreenInfo: (data: { show: boolean, framebufIndex?: number }) => createAction('Toolbar/SET_SHOW_SCREEN_INFO', data),
   setSelectedPaletteRemap: (remapIdx: number) => createAction('Toolbar/SET_SELECTED_PALETTE_REMAP', remapIdx),
+  setShowFileInfoPanel: (flag: boolean) => createAction('Toolbar/SET_SHOW_FILE_INFO_PANEL', flag),
   setCanvasGrid: (flag: boolean) => createAction('Toolbar/SET_CANVAS_GRID', flag),
   setPreviewGrid: (flag: boolean) => createAction('Toolbar/SET_PREVIEW_GRID', flag),
   setShowColorModeLabels: (flag: boolean) => createAction('Toolbar/SET_SHOW_COLOR_MODE_LABELS', flag),
@@ -575,6 +576,7 @@ export class Toolbar {
       showImport: { show: false },
       showImageConverter: false,
       showScreenInfo: { show: false },
+      showFileInfoPanel: true,
       canvasGrid: false,
       previewGrid: false,
       showColorModeLabels: true,
@@ -715,6 +717,8 @@ export class Toolbar {
         return updateField(state, 'showImageConverter', action.data);
       case 'Toolbar/SET_SHOW_SCREEN_INFO':
         return updateField(state, 'showScreenInfo', action.data);
+      case 'Toolbar/SET_SHOW_FILE_INFO_PANEL':
+        return updateField(state, 'showFileInfoPanel', action.data);
       case 'Toolbar/SET_CANVAS_GRID':
         return updateField(state, 'canvasGrid', action.data);
       case 'Toolbar/SET_PREVIEW_GRID':

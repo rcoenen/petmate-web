@@ -9,6 +9,18 @@ import Modal from '../components/Modal';
 import styles from './ScreenInfoModal.module.css';
 
 const MAX_METADATA_BYTES = 128;
+const MONTH_CODES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const URL_RE = /(https?:\/\/[^\s]+)/g;
+
+function formatDateForView(date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return date;
+  const year = m[1];
+  const monthIdx = parseInt(m[2], 10) - 1;
+  const day = m[3];
+  if (monthIdx < 0 || monthIdx > 11) return date;
+  return `${day}/${MONTH_CODES[monthIdx]}/${year}`;
+}
 
 function metadataByteSize(name: string, author: string, date: string, description: string): number {
   const enc = new TextEncoder();
@@ -21,6 +33,21 @@ function metadataByteSize(name: string, author: string, date: string, descriptio
   if (date) size += 3;
   if (descriptionBytes > 0) size += 1 + descriptionBytes;
   return size;
+}
+
+function renderTextWithLinks(text: string): React.ReactNode {
+  if (!text) return '-';
+  const parts = text.split(URL_RE);
+  return parts.map((part, idx) => {
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a key={idx} href={part} target="_blank" rel="noreferrer" className={styles.inlineLink}>
+          {part}
+        </a>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
 }
 
 interface StateProps {
@@ -40,6 +67,7 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
   const [author, setAuthor] = useState('');
   const [date, setDate] = useState('');
   const [description, setDescription] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
     if (show) {
@@ -47,6 +75,7 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
       setAuthor(metadata?.author ?? '');
       setDate(metadata?.date ?? '');
       setDescription(metadata?.description ?? '');
+      setIsEditing(false);
       setShortcutsActive(false);
     } else {
       setShortcutsActive(true);
@@ -63,7 +92,7 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
   const overBudget = effectiveSize > MAX_METADATA_BYTES;
 
   const handleSave = useCallback(() => {
-    if (framebufIndex === undefined || overBudget) return;
+    if (!isEditing || framebufIndex === undefined || overBudget) return;
     const trimmed: ScreenMetadata = {
       name: name.trim() || undefined,
       author: author.trim() || undefined,
@@ -73,7 +102,19 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
     setMetadata(trimmed, framebufIndex);
     setShortcutsActive(true);
     onClose();
-  }, [framebufIndex, name, author, date, description, overBudget, setMetadata, onClose, setShortcutsActive]);
+  }, [isEditing, framebufIndex, name, author, date, description, overBudget, setMetadata, onClose, setShortcutsActive]);
+
+  const handleStartEdit = useCallback(() => {
+    setIsEditing(true);
+  }, []);
+
+  const handleDiscardEdits = useCallback(() => {
+    setName(metadata?.name ?? '');
+    setAuthor(metadata?.author ?? '');
+    setDate(metadata?.date ?? '');
+    setDescription(metadata?.description ?? '');
+    setIsEditing(false);
+  }, [metadata]);
 
   const handleClose = useCallback(() => {
     setShortcutsActive(true);
@@ -93,54 +134,81 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
 
         <div className={styles.field}>
           <label className={styles.label}>Name</label>
-          <input
-            className={styles.input}
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            maxLength={48}
-            autoFocus
-          />
+          {isEditing ? (
+            <input
+              className={styles.input}
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              maxLength={48}
+              autoFocus
+            />
+          ) : (
+            <div className={name ? styles.valueTextPlain : styles.valueTextEmpty}>{renderTextWithLinks(name)}</div>
+          )}
         </div>
 
         <div className={styles.field}>
           <label className={styles.label}>Author</label>
-          <input
-            className={styles.input}
-            type="text"
-            value={author}
-            onChange={e => setAuthor(e.target.value)}
-            maxLength={48}
-          />
+          {isEditing ? (
+            <input
+              className={styles.input}
+              type="text"
+              value={author}
+              onChange={e => setAuthor(e.target.value)}
+              maxLength={48}
+            />
+          ) : (
+            <div className={author ? styles.valueTextPlain : styles.valueTextEmpty}>{renderTextWithLinks(author)}</div>
+          )}
         </div>
 
         <div className={styles.field}>
           <label className={styles.label}>Date</label>
-          <input
-            className={styles.input}
-            type="date"
-            value={date}
-            onChange={e => setDate(e.target.value)}
-          />
+          {isEditing ? (
+            <input
+              className={styles.input}
+              type="date"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+            />
+          ) : (
+            <div className={date ? styles.valueTextPlain : styles.valueTextEmpty}>{date ? formatDateForView(date) : '-'}</div>
+          )}
         </div>
 
         <div className={styles.field}>
           <label className={styles.label}>Description</label>
-          <textarea
-            className={styles.textarea}
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            rows={2}
-          />
+          {isEditing ? (
+            <textarea
+              className={styles.textarea}
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              rows={2}
+            />
+          ) : (
+            <div className={description ? styles.valueTextPlain : styles.valueTextEmpty}>{renderTextWithLinks(description)}</div>
+          )}
         </div>
 
-        <div className={overBudget ? styles.budgetOver : styles.budget}>
-          {effectiveSize} / {MAX_METADATA_BYTES} bytes
-        </div>
+        {isEditing && (
+          <div className={overBudget ? styles.budgetOver : styles.budget}>
+            {effectiveSize} / {MAX_METADATA_BYTES} bytes
+          </div>
+        )}
 
         <div className={styles.buttons}>
-          <button className={styles.cancelBtn} onClick={handleClose}>Cancel</button>
-          <button className={styles.saveBtn} onClick={handleSave} disabled={overBudget}>Save</button>
+          {!isEditing ? (
+            <>
+              <button className={styles.cancelBtn} onClick={handleClose}>Close</button>
+              <button className={styles.editBtn} onClick={handleStartEdit}>Edit</button>
+            </>
+          ) : (
+            <>
+              <button className={styles.cancelBtn} onClick={handleDiscardEdits}>Discard</button>
+              <button className={styles.saveBtn} onClick={handleSave} disabled={overBudget}>Save</button>
+            </>
+          )}
         </div>
       </div>
     </Modal>

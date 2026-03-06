@@ -188,6 +188,11 @@ export function dispatchMenuCommand(
       dispatch(settingsActions.saveEdits());
       return;
     }
+    case 'toggle-file-info-panel': {
+      const current = getState().toolbar.showFileInfoPanel;
+      dispatch(Toolbar.actions.setShowFileInfoPanel(!current));
+      return;
+    }
     case 'toggle-preview-grid': {
       const current = getState().toolbar.canvasGrid;
       dispatch(Toolbar.actions.setCanvasGrid(!current));

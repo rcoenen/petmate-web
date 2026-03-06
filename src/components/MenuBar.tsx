@@ -284,6 +284,7 @@ export default function MenuBar() {
   const crtFilter = useSelector((state: RootState) => getSettingsCrtFilter(state));
   const showColorModeLabels = useSelector((state: RootState) => state.toolbar.showColorModeLabels);
   const canvasGrid = useSelector((state: RootState) => state.toolbar.canvasGrid);
+  const showFileInfoPanel = useSelector((state: RootState) => state.toolbar.showFileInfoPanel);
 
   const handleCommand = useCallback((cmd: string) => {
     setOpenMenu(null);
@@ -322,6 +323,7 @@ export default function MenuBar() {
   const displayItems: ItemDef[] = [
     { label: 'CRT Filter', submenu: crtSubmenu },
     { separator: true },
+    { label: `${showFileInfoPanel ? '\u2022 ' : '  '}Show File Info`, cmd: 'toggle-file-info-panel' },
     { label: `${canvasGrid ? '\u2022 ' : '  '}Show Grid`, cmd: 'toggle-preview-grid' },
     { separator: true },
     { label: 'Color Mode Labels', submenu: [

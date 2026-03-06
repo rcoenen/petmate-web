@@ -268,9 +268,12 @@ interface ToolbarSelectorProps {
   colorPalette: Rgb[];
   canvasFit: FramebufUIState['canvasFit'];
   ecmMode: boolean;
+  mcmMode: boolean;
   extBgColor1: number;
   extBgColor2: number;
   extBgColor3: number;
+  mcmColor1: number;
+  mcmColor2: number;
 }
 
 interface ToolbarViewProps extends ToolbarSelectorProps {
@@ -289,6 +292,8 @@ interface ToolbarViewState {
     extBg1: boolean;
     extBg2: boolean;
     extBg3: boolean;
+    mcm1: boolean;
+    mcm2: boolean;
   };
 }
 
@@ -302,11 +307,13 @@ class ToolbarView extends Component<
       background: false,
       extBg1: false,
       extBg2: false,
-      extBg3: false
+      extBg3: false,
+      mcm1: false,
+      mcm2: false
     }
   }
 
-  setPickerActive = (pickerId: 'border'|'background'|'canvasFit'|'extBg1'|'extBg2'|'extBg3', val: boolean) => {
+  setPickerActive = (pickerId: 'border'|'background'|'canvasFit'|'extBg1'|'extBg2'|'extBg3'|'mcm1'|'mcm2', val: boolean) => {
     this.setState(prevState => {
       return {
         pickerActive: {
@@ -327,14 +334,16 @@ class ToolbarView extends Component<
     this.props.Framebuffer.setBorderColor(color)
   }
 
-  handleToggleEcm = () => {
-    this.props.Framebuffer.setEcmMode(!this.props.ecmMode)
-  }
-
   handleSelectExtBgColor = (index: 1|2|3) => (color: number) => {
     const pickerId = `extBg${index}` as 'extBg1'|'extBg2'|'extBg3';
     this.setPickerActive(pickerId, false)
     this.props.Framebuffer.setExtBgColor({ index, color })
+  }
+
+  handleSelectMcmColor = (index: 1|2) => (color: number) => {
+    const pickerId = `mcm${index}` as 'mcm1'|'mcm2';
+    this.setPickerActive(pickerId, false)
+    this.props.Framebuffer.setMcmColor({ index, color })
   }
 
   render() {
@@ -429,31 +438,6 @@ class ToolbarView extends Component<
             setFit={this.props.setFramebufCanvasFit}
          />
 
-        <FbColorPicker
-          pickerId='border'
-          containerClassName={styles.tooltip}
-          active={this.state.pickerActive.border}
-          color={this.props.borderColor!}
-          onSetActive={this.setPickerActive}
-          onSelectColor={this.handleSelectBorderColor}
-
-          colorPalette={this.props.colorPalette}
-          tooltip='Border'
-        />
-        {!this.props.ecmMode && (
-          <FbColorPicker
-            pickerId='background'
-            containerClassName={styles.tooltip}
-            active={this.state.pickerActive.background}
-            color={this.props.backgroundColor}
-            onSetActive={this.setPickerActive}
-            onSelectColor={this.handleSelectBgColor}
-
-            colorPalette={this.props.colorPalette}
-            tooltip='Background'
-          />
-        )}
-
       </div>
     )
   }
@@ -510,9 +494,12 @@ const mapStateToProps = (state: RootState): ToolbarSelectorProps => {
     colorPalette:    getEffectiveColorPalette(state, framebufIndex),
     canvasFit,
     ecmMode:      fp.maybe(framebuf, false, fb => fb.ecmMode ?? false),
+    mcmMode:      fp.maybe(framebuf, false, fb => fb.mcmMode ?? false),
     extBgColor1:  fp.maybe(framebuf, 0, fb => fb.extBgColor1 ?? 0),
     extBgColor2:  fp.maybe(framebuf, 0, fb => fb.extBgColor2 ?? 0),
     extBgColor3:  fp.maybe(framebuf, 0, fb => fb.extBgColor3 ?? 0),
+    mcmColor1:    fp.maybe(framebuf, 0, fb => fb.mcmColor1 ?? 0),
+    mcmColor2:    fp.maybe(framebuf, 0, fb => fb.mcmColor2 ?? 0),
   }
 }
 export default connect(

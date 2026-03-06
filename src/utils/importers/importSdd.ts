@@ -6,7 +6,9 @@ export function loadSDD(content: string): Framebuf[] {
   const doc = parser.parseFromString(content, 'text/xml');
 
   const screenModeEl = doc.querySelector('ScreenMode');
-  const isExtended = screenModeEl ? parseInt(screenModeEl.textContent ?? '0') === 2 : false;
+  const screenMode = screenModeEl ? parseInt(screenModeEl.textContent ?? '0') : 0;
+  const isExtended = screenMode === 2;
+  const isMcm = screenMode === 1 || screenMode === 4;
 
   const screenEls = doc.querySelectorAll('Screen');
   const framebufs: Framebuf[] = [];
@@ -21,14 +23,18 @@ export function loadSDD(content: string): Framebuf[] {
     const d022El = screenEl.querySelector('D022Colour');
     const d023El = screenEl.querySelector('D023Colour');
     const d024El = screenEl.querySelector('D024Colour');
+    const bk1El = screenEl.querySelector('BK1Colour');
+    const bk2El = screenEl.querySelector('BK2Colour');
     const paletteIdEl = screenEl.querySelector('PaletteId');
 
     const backgroundColor = bgEl ? parseInt(bgEl.textContent ?? '6') : 6;
     const borderColor = borderEl ? parseInt(borderEl.textContent ?? '14') : 14;
     const name = nameEl ? (nameEl.textContent?.trim() ?? 'Screen') : 'Screen';
-    const extBgColor1 = d022El ? parseInt(d022El.textContent ?? '0') : 0;
-    const extBgColor2 = d023El ? parseInt(d023El.textContent ?? '0') : 0;
-    const extBgColor3 = d024El ? parseInt(d024El.textContent ?? '0') : 0;
+    const d022Color = d022El ? parseInt(d022El.textContent ?? '0') : 0;
+    const d023Color = d023El ? parseInt(d023El.textContent ?? '0') : 0;
+    const d024Color = d024El ? parseInt(d024El.textContent ?? '0') : 0;
+    const bk1Color = bk1El ? parseInt(bk1El.textContent ?? '0') : NaN;
+    const bk2Color = bk2El ? parseInt(bk2El.textContent ?? '0') : NaN;
     const paletteId = paletteIdEl?.textContent?.trim() || undefined;
 
     const rowEls = screenEl.querySelectorAll('RowData');
@@ -66,9 +72,16 @@ export function loadSDD(content: string): Framebuf[] {
     };
     if (isExtended) {
       fbData.ecmMode = true;
-      fbData.extBgColor1 = extBgColor1;
-      fbData.extBgColor2 = extBgColor2;
-      fbData.extBgColor3 = extBgColor3;
+      fbData.extBgColor1 = d022Color;
+      fbData.extBgColor2 = d023Color;
+      fbData.extBgColor3 = d024Color;
+    }
+    if (isMcm) {
+      fbData.mcmMode = true;
+      // Screen Designer stores MCM shared colors in BK1/BK2.
+      // D022/D023 may differ in some files, so prefer BK1/BK2 and fallback.
+      fbData.mcmColor1 = Number.isNaN(bk1Color) ? d022Color : bk1Color;
+      fbData.mcmColor2 = Number.isNaN(bk2Color) ? d023Color : bk2Color;
     }
     if (paletteId) {
       fbData.paletteId = paletteId;

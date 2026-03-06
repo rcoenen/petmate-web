@@ -66,6 +66,11 @@ export function saveBASIC(fbs: Framebuf[], fmt: FileFormatBas): string {
     init += `\n60 poke 53282,${selectedFb.extBgColor1 ?? 0}`
     init += `\n70 poke 53283,${selectedFb.extBgColor2 ?? 0}`
     init += `\n80 poke 53284,${selectedFb.extBgColor3 ?? 0}`
+  } else if (selectedFb.mcmMode) {
+    // Insert MCM register setup after charset POKE (line 40)
+    init += '\n50 poke 53270,peek(53270) or 16'
+    init += `\n60 poke 53282,${selectedFb.mcmColor1 ?? 0}`
+    init += `\n70 poke 53283,${selectedFb.mcmColor2 ?? 0}`
   }
   let dataLines = lines.map((line,idx) => {
     return `${idx+200} data ${line}`

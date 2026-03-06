@@ -24,6 +24,23 @@ function ecmBgColorsCode(fb: FramebufWithFont): string {
 `;
 }
 
+function mcmInitCode(): string {
+  return `
+    ; Enable MCM mode (set bit 4 of $D016)
+    lda $d016
+    ora #$10
+    sta $d016
+`;
+}
+
+function mcmColorsCode(fb: FramebufWithFont): string {
+  return `    lda #${fb.mcmColor1 ?? 0}
+    sta $d022
+    lda #${fb.mcmColor2 ?? 0}
+    sta $d023
+`;
+}
+
 interface InitCodeParams {
   borderColor: number;
   backgroundColor: number;
@@ -196,7 +213,9 @@ export function genAsm(fbs: FramebufWithFont[], fmt: FileFormatAsm) {
   }
   const syntax = syntaxes[fmt.exportOptions.assembler];
   let init = options.standalone ? `${syntax.cli}\n${initCode({ backgroundColor, borderColor, charsetBits, label })}` : '';
-  if (options.standalone && selectedFb.ecmMode) {
+  if (options.standalone && selectedFb.mcmMode) {
+    init += mcmInitCode() + mcmColorsCode(selectedFb);
+  } else if (options.standalone && selectedFb.ecmMode) {
     init += ecmInitCode() + ecmBgColorsCode(selectedFb);
   }
   return convertSyntax(init + '\n' + binaryFormatHelp + '\n' + lines.join('\n') + '\n', syntax);

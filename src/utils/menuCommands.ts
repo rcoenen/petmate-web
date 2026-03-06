@@ -1,6 +1,5 @@
 import { formats, promptProceedWithUnsavedChanges } from './index';
 import { loadSDD } from './importers';
-import * as Screens from '../redux/screens';
 import * as ReduxRoot from '../redux/root';
 import { Toolbar } from '../redux/toolbar';
 import { actions as settingsActions } from '../redux/settings';
@@ -38,9 +37,8 @@ export function dispatchMenuCommand(
         detail: 'This will empty your workspace.  This cannot be undone.'
       }).then(ok => {
         if (ok) {
-          dispatch(ReduxRoot.actions.resetState());
-          dispatch(Screens.actions.newScreen());
-          dispatch(ReduxRoot.actions.updateLastSavedSnapshot());
+          dispatch(Toolbar.actions.setNewModeTarget('workspace'));
+          dispatch(Toolbar.actions.setShowNewDocumentMode(true));
         }
       });
       return;
@@ -110,7 +108,8 @@ export function dispatchMenuCommand(
       dispatch(Toolbar.actions.setShowSettings(true));
       return;
     case 'new-screen':
-      dispatch(Screens.actions.newScreen());
+      dispatch(Toolbar.actions.setNewModeTarget('screen'));
+      dispatch(Toolbar.actions.setShowNewDocumentMode(true));
       return;
     case 'shift-screen-left':
       dispatch(Toolbar.actions.shiftHorizontal(-1));
@@ -147,12 +146,6 @@ export function dispatchMenuCommand(
       dispatch(Toolbar.actions.setShowColorModeLabels(!current));
       return;
     }
-    case 'set-mode-standard':
-      dispatch(Toolbar.actions.setCurrentScreenEcmMode(false));
-      return;
-    case 'set-mode-ecm':
-      dispatch(Toolbar.actions.setCurrentScreenEcmMode(true));
-      return;
     case 'reset-workspace':
       dispatch(Toolbar.actions.setShowResetConfirm(true));
       return;

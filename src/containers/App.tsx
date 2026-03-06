@@ -11,6 +11,7 @@ import ExportModal from './ExportModal'
 import ImportModal from './ImportModal'
 import ImageConverterModal from './ImageConverterModal'
 import AboutModal from './AboutModal'
+import NewDocumentModeModal from './NewDocumentModeModal'
 import ResetWorkspaceModal from './ResetWorkspaceModal'
 import Editor from './Editor';
 import FileDrop from './FileDrop'
@@ -153,6 +154,7 @@ class AppView extends Component<AppViewProps> {
         <ImportModal />
         <ImageConverterModal />
         <AboutModal />
+        <NewDocumentModeModal />
         <ResetWorkspaceModal />
       </Fragment>
     )

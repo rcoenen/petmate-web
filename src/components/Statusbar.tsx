@@ -86,6 +86,9 @@ export class CanvasStatusbar extends PureComponent<CanvasStatusbarProps> {
         {framebuf.ecmMode && (
           <div style={{color:'var(--main-text-color)', marginLeft: '4px', fontWeight: 'bold'}}>ECM</div>
         )}
+        {framebuf.mcmMode && (
+          <div style={{color:'var(--main-text-color)', marginLeft: '4px', fontWeight: 'bold'}}>MCM</div>
+        )}
       </div>
     )
   }

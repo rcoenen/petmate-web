@@ -44,9 +44,12 @@ interface CharSelectProps {
   backgroundColor: number;
   textColor: number;
   ecmMode: boolean;
+  mcmMode: boolean;
   extBgColor1: number;
   extBgColor2: number;
   extBgColor3: number;
+  mcmColor1: number;
+  mcmColor2: number;
 }
 
 // Char position & click hook
@@ -103,6 +106,10 @@ function CharSelectView(props: {
   inspectedCharPos?: Coord2 | null;
   backgroundColor: string;
   style: CSSProperties;
+  mcmMode?: boolean;
+  mcmColor1?: number;
+  mcmColor2?: number;
+  backgroundColorIndex?: number;
 
   fb: Pixel[][];
   onCharSelected: (pos: Coord2|null) => void;
@@ -164,6 +171,10 @@ function CharSelectView(props: {
             framebuf={props.fb}
             font={props.font}
             colorPalette={props.colorPalette}
+            mcmMode={props.mcmMode}
+            mcmColor1={props.mcmColor1}
+            mcmColor2={props.mcmColor2}
+            backgroundColorIndex={props.backgroundColorIndex}
           />
           {charPos !== null ?
             <CharPosOverlay
@@ -221,6 +232,18 @@ function buildEcmPageFb(font: Font, textColor: number): Pixel[][] {
   );
 }
 
+function buildMcmFb(font: Font, textColor: number): Pixel[][] {
+  // Keep charmap glyph geometry stable in MCM preview:
+  // always render as multicolor cells, but preserve the selected hue (low 3 bits).
+  const mcmTextColor = (textColor & 7) | 8;
+  return fp.mkArray(16, y =>
+    fp.mkArray(16, x => ({
+      code: utils.charScreencodeFromRowCol(font, { row: y, col: x })!,
+      color: mcmTextColor
+    }))
+  );
+}
+
 interface CharSelectState {
   ecmPage: number;
   activeBgPicker: number | null;  // 0-3 or null
@@ -232,6 +255,7 @@ class CharSelect extends Component<CharSelectProps, CharSelectState> {
   font: Font|null = null;
   prevTextColor = -1;
   prevEcmMode = false;
+  prevMcmMode = false;
   prevEcmPage = 0;
 
   state: CharSelectState = { ecmPage: 0, activeBgPicker: null };
@@ -242,7 +266,7 @@ class CharSelect extends Component<CharSelectProps, CharSelectState> {
   }
 
   computeCachedFb(textColor: number) {
-    const { font, ecmMode } = this.props
+    const { font, ecmMode, mcmMode } = this.props
     if (ecmMode) {
       // Filter charOrder to only the 64 char shapes available in ECM (codes 0-63)
       const ecmChars = font.charOrder.filter(c => c < 64);
@@ -255,6 +279,8 @@ class CharSelect extends Component<CharSelectProps, CharSelectState> {
           }
         })
       })
+    } else if (mcmMode) {
+      this.fb = buildMcmFb(font, textColor);
     } else {
       this.fb = fp.mkArray(16, y => {
         return fp.mkArray(16, x => {
@@ -267,6 +293,7 @@ class CharSelect extends Component<CharSelectProps, CharSelectState> {
     }
     this.prevTextColor = textColor
     this.prevEcmMode = ecmMode
+    this.prevMcmMode = mcmMode
     this.prevEcmPage = this.state.ecmPage
     this.font = font
   }
@@ -301,7 +328,7 @@ class CharSelect extends Component<CharSelectProps, CharSelectState> {
   }
 
   render () {
-    const { colorPalette, ecmMode } = this.props
+    const { colorPalette, ecmMode, mcmMode } = this.props
     const { scaleX, scaleY } = this.props.canvasScale
     const gridSize = ecmMode ? 8 : 16;
     const w = `${Math.floor(scaleX*8*gridSize+scaleX*gridSize)}px`
@@ -318,11 +345,14 @@ class CharSelect extends Component<CharSelectProps, CharSelectState> {
     const backg = utils.colorIndexToCssRgb(colorPalette, bgColorIdx)
 
     const s = {width: w, height:h}
-    if (this.prevTextColor !== this.props.textColor ||
+    const charmapColor = this.props.inspectedColorIndex ?? this.props.textColor;
+
+    if (this.prevTextColor !== charmapColor ||
       this.font !== this.props.font ||
       this.prevEcmMode !== ecmMode ||
+      this.prevMcmMode !== mcmMode ||
       this.prevEcmPage !== this.state.ecmPage) {
-      this.computeCachedFb(this.props.textColor)
+      this.computeCachedFb(charmapColor)
     }
     if (!this.fb) {
       throw new Error('FB cannot be null here');
@@ -500,6 +530,10 @@ class CharSelect extends Component<CharSelectProps, CharSelectState> {
           colorPalette={colorPalette}
           selected={selected!}
           inspectedCharPos={inspectedCharPos}
+          mcmMode={this.props.mcmMode}
+          mcmColor1={this.props.mcmColor1}
+          mcmColor2={this.props.mcmColor2}
+          backgroundColorIndex={this.props.backgroundColor}
           onCharSelected={this.handleClick}
           setCharset={this.props.Framebuffer.setCharset}
         />
@@ -536,9 +570,12 @@ const mapStateToProps = (state: RootState) => {
     colorPalette: getEffectiveColorPalette(state, framebufIndex),
     selectedTool: state.toolbar.selectedTool,
     ecmMode: framebuf?.ecmMode ?? false,
+    mcmMode: framebuf?.mcmMode ?? false,
     extBgColor1: framebuf?.extBgColor1 ?? 0,
     extBgColor2: framebuf?.extBgColor2 ?? 0,
     extBgColor3: framebuf?.extBgColor3 ?? 0,
+    mcmColor1: framebuf?.mcmColor1 ?? 0,
+    mcmColor2: framebuf?.mcmColor2 ?? 0,
   }
 }
 

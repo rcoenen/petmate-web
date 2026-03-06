@@ -1,6 +1,7 @@
 
 import { FramebufWithFont, RgbPalette } from '../../redux/types'
 import { ecmCharIndex, ecmCellBgColor } from '../ecm'
+import { mcmForegroundColor, mcmIsMulticolorCell, mcmResolveBitPairColor } from '../mcm'
 
 // These match what VICE exports as a PNG.
 const BORDER_LEFT_WIDTH = 32;
@@ -30,11 +31,44 @@ export function framebufToPixelsIndexed(fb: FramebufWithFont, borders: boolean):
   buf.fill(borderColor);
 
   const isEcm = fb.ecmMode;
+  const isMcm = fb.mcmMode;
+  const mcmBg = backgroundColor;
+  const mcm1 = fb.mcmColor1 ?? 0;
+  const mcm2 = fb.mcmColor2 ?? 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const pix = framebuf[y][x]
       const code = pix.code
       const col = pix.color
+      if (isMcm) {
+        const boffs = code * 8;
+        if (mcmIsMulticolorCell(col)) {
+          const fg = mcmForegroundColor(col);
+          for (let cy = 0; cy < 8; cy++) {
+            const rowBits = fontData[boffs + cy];
+            for (let pair = 0; pair < 4; pair++) {
+              const bitPair = (rowBits >> (6 - pair * 2)) & 0x03;
+              const c = mcmResolveBitPairColor(bitPair, mcmBg, mcm1, mcm2, fg);
+              const xStart = x * 8 + pair * 2;
+              const yOffs = y * 8 + cy + imgYOffset;
+              const offs0 = yOffs * imgWidth + xStart + imgXOffset;
+              buf[offs0] = c;
+              buf[offs0 + 1] = c;
+            }
+          }
+        } else {
+          for (let cy = 0; cy < 8; cy++) {
+            const p = fontData[boffs + cy];
+            for (let i = 0; i < 8; i++) {
+              const set = ((128 >> i) & p) !== 0;
+              const offs = (y*8 + cy + imgYOffset) * imgWidth + (x*8 + i) + imgXOffset;
+              buf[offs] = set ? col : mcmBg;
+            }
+          }
+        }
+        continue;
+      }
+
       const charIdx = isEcm ? ecmCharIndex(code) : code;
       const cellBg = isEcm ? ecmCellBgColor(fb, code) : backgroundColor;
       const boffs = charIdx*8;

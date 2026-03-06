@@ -56,6 +56,8 @@ const SET_NAME = 'Framebuffer/SET_NAME'
 const SET_DIMS = 'Framebuffer/SET_DIMS'
 const SET_ECM_MODE = 'Framebuffer/SET_ECM_MODE'
 const SET_EXT_BG_COLOR = 'Framebuffer/SET_EXT_BG_COLOR'
+const SET_MCM_MODE = 'Framebuffer/SET_MCM_MODE'
+const SET_MCM_COLOR = 'Framebuffer/SET_MCM_COLOR'
 const SET_PALETTE_ID = 'Framebuffer/SET_PALETTE_ID'
 
 const actionCreators = {
@@ -77,6 +79,8 @@ const actionCreators = {
 
   setEcmMode: (data: boolean, framebufIndex: number) => createFbAction(SET_ECM_MODE, framebufIndex, null, data),
   setExtBgColor: (data: { index: 1|2|3, color: number }, framebufIndex: number) => createFbAction(SET_EXT_BG_COLOR, framebufIndex, null, data),
+  setMcmMode: (data: boolean, framebufIndex: number) => createFbAction(SET_MCM_MODE, framebufIndex, null, data),
+  setMcmColor: (data: { index: 1|2, color: number }, framebufIndex: number) => createFbAction(SET_MCM_COLOR, framebufIndex, null, data),
   setPaletteId: (data: string|undefined, framebufIndex: number) => createFbAction(SET_PALETTE_ID, framebufIndex, null, data),
 };
 
@@ -196,6 +200,9 @@ export function fbReducer(state: Framebuf = {
   extBgColor1: 0,
   extBgColor2: 0,
   extBgColor3: 0,
+  mcmMode: false,
+  mcmColor1: 0,
+  mcmColor2: 0,
   paletteId: undefined
 }, action: Actions): Framebuf {
   switch (action.type) {
@@ -234,6 +241,9 @@ export function fbReducer(state: Framebuf = {
         extBgColor1: c.extBgColor1 ?? 0,
         extBgColor2: c.extBgColor2 ?? 0,
         extBgColor3: c.extBgColor3 ?? 0,
+        mcmMode: c.mcmMode ?? false,
+        mcmColor1: c.mcmColor1 ?? 0,
+        mcmColor2: c.mcmColor2 ?? 0,
         paletteId: c.paletteId ?? undefined
       }
     case SET_BACKGROUND_COLOR:
@@ -245,12 +255,28 @@ export function fbReducer(state: Framebuf = {
     case SET_NAME:
       return updateField(state, 'name', action.data);
     case SET_ECM_MODE:
-      return updateField(state, 'ecmMode', action.data);
+      return {
+        ...state,
+        ecmMode: action.data,
+        mcmMode: action.data ? false : state.mcmMode
+      };
     case SET_EXT_BG_COLOR: {
         const { index, color } = action.data;
         if (index === 1) return updateField(state, 'extBgColor1', color);
         if (index === 2) return updateField(state, 'extBgColor2', color);
         if (index === 3) return updateField(state, 'extBgColor3', color);
+        return state;
+      }
+    case SET_MCM_MODE:
+      return {
+        ...state,
+        mcmMode: action.data,
+        ecmMode: action.data ? false : state.ecmMode
+      };
+    case SET_MCM_COLOR: {
+        const { index, color } = action.data;
+        if (index === 1) return updateField(state, 'mcmColor1', color);
+        if (index === 2) return updateField(state, 'mcmColor2', color);
         return state;
       }
     case SET_PALETTE_ID:

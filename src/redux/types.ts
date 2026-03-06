@@ -35,6 +35,9 @@ export interface Framebuf {
   readonly extBgColor1?: number;  // $D022
   readonly extBgColor2?: number;  // $D023
   readonly extBgColor3?: number;  // $D024
+  readonly mcmMode?: boolean;
+  readonly mcmColor1?: number;    // $D022
+  readonly mcmColor2?: number;    // $D023
   readonly paletteId?: string;
 };
 
@@ -68,6 +71,8 @@ export interface BrushRegion {
 export type Brush = any;
 
 export type CrtFilter = 'none' | 'scanlines' | 'colorTv' | 'bwTv';
+export type ColorMode = 'std' | 'ecm' | 'mcm';
+export type NewModeTarget = 'workspace' | 'screen';
 
 export type PaletteName = string;
 
@@ -122,6 +127,8 @@ export interface Toolbar {
   shiftKey: boolean;
   spacebarKey: boolean;
   showAbout: boolean;
+  showNewDocumentMode: boolean;
+  newModeTarget: NewModeTarget;
   showSettings: boolean;
   showCustomFonts: boolean;
   showExport: { show: boolean, fmt?: FileFormat}; // fmt undefined only when show=false

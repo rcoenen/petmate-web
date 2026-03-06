@@ -188,6 +188,11 @@ const framebufFields = (framebuf: Framebuf) => {
     fields.extBgColor2 = framebuf.extBgColor2;
     fields.extBgColor3 = framebuf.extBgColor3;
   }
+  if (framebuf.mcmMode) {
+    fields.mcmMode = framebuf.mcmMode;
+    fields.mcmColor1 = framebuf.mcmColor1;
+    fields.mcmColor2 = framebuf.mcmColor2;
+  }
   if (framebuf.paletteId) {
     fields.paletteId = framebuf.paletteId;
   }

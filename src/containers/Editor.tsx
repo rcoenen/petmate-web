@@ -110,10 +110,13 @@ interface BrushOverlayProps {
   brush: Brush | null;
   font: Font;
   ecmMode?: boolean;
+  mcmMode?: boolean;
   backgroundColorIndex?: number;
   extBgColor1?: number;
   extBgColor2?: number;
   extBgColor3?: number;
+  mcmColor1?: number;
+  mcmColor2?: number;
 }
 
 class BrushOverlay extends Component<BrushOverlayProps> {
@@ -172,10 +175,13 @@ class BrushOverlay extends Component<BrushOverlayProps> {
           font={this.props.font}
           framebuf={this.props.brush.framebuf}
           ecmMode={this.props.ecmMode}
+          mcmMode={this.props.mcmMode}
           backgroundColorIndex={this.props.backgroundColorIndex}
           extBgColor1={this.props.extBgColor1}
           extBgColor2={this.props.extBgColor2}
           extBgColor3={this.props.extBgColor3}
+          mcmColor1={this.props.mcmColor1}
+          mcmColor2={this.props.mcmColor2}
         />
       </div>
     )
@@ -210,9 +216,12 @@ interface FramebufferViewProps {
   canvasGrid: boolean;
 
   ecmMode?: boolean;
+  mcmMode?: boolean;
   extBgColor1?: number;
   extBgColor2?: number;
   extBgColor3?: number;
+  mcmColor1?: number;
+  mcmColor2?: number;
 
   onCharPosChanged: (args: {isActive: boolean, charPos: Coord2}) => void;
 
@@ -362,6 +371,14 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
   private shiftLockAxis: 'shift'|'row'|'col'|null = null;
   private dragging = false;
 
+  resetDraggingState = () => {
+    this.dragging = false;
+    this.prevCoord = null;
+    this.prevDragPos = null;
+    this.lockStartCoord = null;
+    this.shiftLockAxis = null;
+  }
+
   currentCharPos (e: any): { charPos: Coord2 } {
     if (!this.ref.current) {
       throw new Error('impossible?');
@@ -420,7 +437,7 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
     }
 
     this.dragging = true
-    e.target.setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);
     this.prevCoord = charPos
     this.dragStart(charPos)
 
@@ -442,10 +459,7 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
     if (this.dragging) {
       this.dragEnd()
     }
-
-    this.dragging = false
-    this.lockStartCoord = null
-    this.shiftLockAxis = null
+    this.resetDraggingState();
   }
 
   handlePointerMove = (e: PointerEvent) => {
@@ -463,6 +477,12 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
       this.prevCharPos.col !== charPos.col) {
       this.prevCharPos = {...charPos}
         this.props.onCharPosChanged({isActive:this.state.isActive, charPos})
+    }
+
+    // Defensive: if drag state got stuck but no button is held, abort drag.
+    if (this.dragging && e.buttons === 0) {
+      this.resetDraggingState();
+      return;
     }
 
     if (!this.dragging) {
@@ -498,6 +518,10 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
       }
       this.prevCoord = charPos
     }
+  }
+
+  handlePointerCancel = () => {
+    this.resetDraggingState();
   }
   //---------------------------------------------------------------------
   // Pan/zoom mouse event handlers.  Called by the bound handlePointerDown/Move/Up
@@ -644,10 +668,13 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
               font={this.props.font}
               brush={this.props.brush}
               ecmMode={this.props.ecmMode}
+              mcmMode={this.props.mcmMode}
               backgroundColorIndex={this.props.backgroundColor}
               extBgColor1={this.props.extBgColor1}
               extBgColor2={this.props.extBgColor2}
               extBgColor3={this.props.extBgColor3}
+              mcmColor1={this.props.mcmColor1}
+              mcmColor2={this.props.mcmColor2}
             />
         } else {
           overlays =
@@ -774,6 +801,7 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
         onPointerDown={(e) => this.handlePointerDown(e)}
         onPointerMove={(e) => this.handlePointerMove(e)}
         onPointerUp={(e) => this.handlePointerUp(e)}
+        onPointerCancel={this.handlePointerCancel}
       >
         <div style={canvasContainerStyle}>
           <CharGrid
@@ -788,10 +816,13 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
             font={this.props.font}
             colorPalette={this.props.colorPalette}
             ecmMode={this.props.ecmMode}
+            mcmMode={this.props.mcmMode}
             backgroundColorIndex={this.props.backgroundColor}
             extBgColor1={this.props.extBgColor1}
             extBgColor2={this.props.extBgColor2}
             extBgColor3={this.props.extBgColor3}
+            mcmColor1={this.props.mcmColor1}
+            mcmColor2={this.props.mcmColor2}
           />
           {overlays}
           {this.props.canvasGrid ? <GridOverlay width={charWidth} height={charHeight} color={gridColor} /> : null}
@@ -858,9 +889,12 @@ const FramebufferCont = connect(
       framebufHeight: framebuf.height,
       backgroundColor: framebuf.backgroundColor,
       ecmMode: framebuf.ecmMode,
+      mcmMode: framebuf.mcmMode,
       extBgColor1: framebuf.extBgColor1,
       extBgColor2: framebuf.extBgColor2,
       extBgColor3: framebuf.extBgColor3,
+      mcmColor1: framebuf.mcmColor1,
+      mcmColor2: framebuf.mcmColor2,
       undoId: state.toolbar.undoId,
       curScreencode: selectors.getScreencodeWithTransform(selected, font, charTransform),
       selectedTool: state.toolbar.selectedTool,
@@ -902,22 +936,133 @@ interface EditorProps {
 interface EditorDispatch {
   Toolbar: toolbar.PropsFromDispatch;
   setPaletteId: (paletteId: string | undefined, framebufIndex: number) => void;
+  setBorderColor: (color: number, framebufIndex: number) => void;
+  setBackgroundColor: (color: number, framebufIndex: number) => void;
+  setExtBgColor: (index: 1|2|3, color: number, framebufIndex: number) => void;
+  setMcmColor: (index: 1|2, color: number, framebufIndex: number) => void;
 }
 
-class Editor extends Component<EditorProps & EditorDispatch> {
-  state = {
-    isActive: false,
-    charPos: { row: -1, col: 0 }
-  }
+type EditorColorTarget = 'border' | 'bg0' | 'char' | 'ecm1' | 'ecm2' | 'ecm3' | 'mcm1' | 'mcm2';
 
-  handleSetColor = (color: number) => {
-    this.props.Toolbar.setCurrentColor(color)
+interface ColorTargetDef {
+  id: EditorColorTarget;
+  label: string;
+  detail: string;
+  register: string;
+  color: number;
+}
+
+interface EditorState {
+  isActive: boolean;
+  charPos: Coord2;
+  activeColorTarget: EditorColorTarget;
+}
+
+class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
+  state: EditorState = {
+    isActive: false,
+    charPos: { row: -1, col: 0 },
+    activeColorTarget: 'char'
   }
 
   handleSetPalette = (e: React.ChangeEvent<HTMLSelectElement>) => {
     if (this.props.framebufIndex !== null) {
       this.props.setPaletteId(e.target.value || undefined, this.props.framebufIndex);
     }
+  }
+
+  buildColorTargets = (framebuf: Framebuf): ColorTargetDef[] => {
+    const targets: ColorTargetDef[] = [
+      {
+        id: 'border',
+        label: 'Border',
+        detail: 'Canvas frame',
+        register: '$D020',
+        color: framebuf.borderColor
+      },
+      {
+        id: 'bg0',
+        label: 'Background',
+        detail: 'Global background',
+        register: '$D021',
+        color: framebuf.backgroundColor
+      },
+      {
+        id: 'char',
+        label: framebuf.mcmMode ? 'Cell color' : 'Char color',
+        detail: framebuf.mcmMode ? 'Cell value' : 'Draw color',
+        register: 'Color RAM',
+        color: this.props.textColor
+      }
+    ];
+    if (framebuf.ecmMode) {
+      targets.push(
+        { id: 'ecm1', label: 'Alt Bg 1', detail: 'ECM background', register: '$D022', color: framebuf.extBgColor1 ?? 0 },
+        { id: 'ecm2', label: 'Alt Bg 2', detail: 'ECM background', register: '$D023', color: framebuf.extBgColor2 ?? 0 },
+        { id: 'ecm3', label: 'Alt Bg 3', detail: 'ECM background', register: '$D024', color: framebuf.extBgColor3 ?? 0 },
+      );
+    }
+    if (framebuf.mcmMode) {
+      targets.push(
+        { id: 'mcm1', label: 'Shared 1', detail: 'MCM shared color', register: '$D022', color: framebuf.mcmColor1 ?? 0 },
+        { id: 'mcm2', label: 'Shared 2', detail: 'MCM shared color', register: '$D023', color: framebuf.mcmColor2 ?? 0 },
+      );
+    }
+    return targets;
+  }
+
+  resolveActiveColorTarget = (targets: ColorTargetDef[]): EditorColorTarget => {
+    return targets.some(t => t.id === this.state.activeColorTarget)
+      ? this.state.activeColorTarget
+      : 'char';
+  }
+
+  handleSelectColorTarget = (target: EditorColorTarget) => {
+    this.setState({ activeColorTarget: target });
+  }
+
+  setColorForTarget = (target: EditorColorTarget, color: number) => {
+    const { framebufIndex } = this.props;
+    if (framebufIndex === null) {
+      return;
+    }
+    switch (target) {
+      case 'border':
+        this.props.setBorderColor(color, framebufIndex);
+        return;
+      case 'bg0':
+        this.props.setBackgroundColor(color, framebufIndex);
+        return;
+      case 'char':
+        this.props.Toolbar.setCurrentColor(color);
+        return;
+      case 'ecm1':
+        this.props.setExtBgColor(1, color, framebufIndex);
+        return;
+      case 'ecm2':
+        this.props.setExtBgColor(2, color, framebufIndex);
+        return;
+      case 'ecm3':
+        this.props.setExtBgColor(3, color, framebufIndex);
+        return;
+      case 'mcm1':
+        this.props.setMcmColor(1, color, framebufIndex);
+        return;
+      case 'mcm2':
+        this.props.setMcmColor(2, color, framebufIndex);
+        return;
+      default:
+        return;
+    }
+  }
+
+  handlePaletteColorPick = (color: number) => {
+    if (!this.props.framebuf) {
+      return;
+    }
+    const targets = this.buildColorTargets(this.props.framebuf);
+    const target = this.resolveActiveColorTarget(targets);
+    this.setColorForTarget(target, color);
   }
 
   handleCharPosChanged = (args: { isActive: boolean, charPos: Coord2 }) => {
@@ -948,6 +1093,10 @@ class Editor extends Component<EditorProps & EditorDispatch> {
 
     const { crtFilter } = this.props;
     const useCrt = crtFilter !== 'none' && crtFilter !== 'scanlines';
+    const modeLabel = this.props.framebuf.mcmMode ? 'MCM' : this.props.framebuf.ecmMode ? 'ECM' : 'Standard';
+    const colorTargets = this.buildColorTargets(this.props.framebuf);
+    const activeColorTarget = this.resolveActiveColorTarget(colorTargets);
+    const selectedTarget = colorTargets.find(t => t.id === activeColorTarget) ?? colorTargets[0];
     const framebufStyle: CSSProperties = {
       width: `${framebufSize.width}px`,
       height: `${framebufSize.height}px`,
@@ -969,7 +1118,6 @@ class Editor extends Component<EditorProps & EditorDispatch> {
         this.props.selectedTool == Tool.PanZoom ? styles.panzoom : null,
         this.props.selectedTool === Tool.Inspector ? styles.inspector : null
       );
-
     // Inspector: read hovered cell data
     let inspectedScreencode: number | undefined = undefined;
     let inspectedColorIndex: number | undefined = undefined;
@@ -1012,6 +1160,7 @@ class Editor extends Component<EditorProps & EditorDispatch> {
         </div>
         <div style={{marginLeft: '8px', marginRight: '16px'}}>
           <div style={{marginBottom: '10px'}}>
+            <div className={styles.modeBadge}>Mode: {modeLabel}</div>
             <div style={{marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px'}}>
               <span style={{fontSize: '0.75em', color: 'rgb(160,160,160)'}}>Palette:</span>
               <select
@@ -1032,13 +1181,42 @@ class Editor extends Component<EditorProps & EditorDispatch> {
                 ))}
               </select>
             </div>
+            <div className={styles.colorTargets}>
+              {colorTargets.map((target) => (
+                <button
+                  key={target.id}
+                  type='button'
+                  onClick={() => this.handleSelectColorTarget(target.id)}
+                  className={classNames(
+                    styles.colorTarget,
+                    target.id === activeColorTarget ? styles.colorTargetActive : null
+                  )}
+                  title={`${target.label} (${target.register}) - ${target.detail}`}
+                >
+                  <div
+                    className={styles.colorSwatch}
+                    style={{ backgroundColor: utils.colorIndexToCssRgb(colorPalette, target.color) }}
+                  />
+                  <div className={styles.colorTargetText}>
+                    <div className={styles.colorTargetLabel}>{target.label}</div>
+                    <div className={styles.colorTargetReg}>{target.detail} - {target.register}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            {this.props.framebuf.ecmMode && (
+              <div className={styles.modeHint}>ECM uses shared backgrounds Bg0-Bg3.</div>
+            )}
+            {this.props.framebuf.mcmMode && (
+              <div className={styles.modeHint}>Cell color: 0-7 hires, 8-15 multicolor.</div>
+            )}
             <ColorPicker
-              selected={this.props.textColor}
+              selected={selectedTarget.color}
               colorPalette={colorPalette}
-              onSelectColor={this.handleSetColor}
+              onSelectColor={this.handlePaletteColorPick}
               twoRows={true}
               scale={{scaleX, scaleY}}
-              inspectedColorIndex={inspectedColorIndex}
+              inspectedColorIndex={activeColorTarget === 'char' ? inspectedColorIndex : undefined}
             />
           </div>
           <CharSelect canvasScale={{scaleX, scaleY}} inspectedScreencode={inspectedScreencode} inspectedColorIndex={inspectedColorIndex}/>
@@ -1069,6 +1247,14 @@ export default connect(
       Toolbar: Toolbar.bindDispatch(dispatch),
       setPaletteId: (paletteId: string | undefined, framebufIndex: number) =>
         dispatch(Framebuffer.actions.setPaletteId(paletteId, framebufIndex)),
+      setBorderColor: (color: number, framebufIndex: number) =>
+        dispatch(Framebuffer.actions.setBorderColor(color, framebufIndex)),
+      setBackgroundColor: (color: number, framebufIndex: number) =>
+        dispatch(Framebuffer.actions.setBackgroundColor(color, framebufIndex)),
+      setExtBgColor: (index: 1|2|3, color: number, framebufIndex: number) =>
+        dispatch(Framebuffer.actions.setExtBgColor({ index, color }, framebufIndex)),
+      setMcmColor: (index: 1|2, color: number, framebufIndex: number) =>
+        dispatch(Framebuffer.actions.setMcmColor({ index, color }, framebufIndex)),
     }
   }
 )(Editor)

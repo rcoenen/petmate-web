@@ -272,12 +272,9 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
     ];
 
     return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'flex-start',
-        marginRight: '4px'
-      }}
+      <div
+      className={styles.tabItem}
+      style={{ width: divWidth + 10 }}
       ref={this.tabRef}
       >
         {this.props.showColorModeLabels && <div style={{
@@ -287,7 +284,7 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
           width: divWidth + 10,
           textAlign: 'center'
         }}>
-          {this.props.framebuf.ecmMode ? 'ECM' : 'Standard'}
+          {this.props.framebuf.mcmMode ? 'MCM' : this.props.framebuf.ecmMode ? 'ECM' : 'Standard'}
         </div>}
         <ContextMenuArea menuItems={menuItems}>
           <div
@@ -305,10 +302,13 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
                 font={font}
                 colorPalette={colorPalette}
                 ecmMode={this.props.framebuf.ecmMode}
+                mcmMode={this.props.framebuf.mcmMode}
                 backgroundColorIndex={backgroundColor}
                 extBgColor1={this.props.framebuf.extBgColor1}
                 extBgColor2={this.props.framebuf.extBgColor2}
                 extBgColor3={this.props.framebuf.extBgColor3}
+                mcmColor1={this.props.framebuf.mcmColor1}
+                mcmColor2={this.props.framebuf.mcmColor2}
               />
             </div>
           </div>
@@ -481,9 +481,10 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
   }, [props.Screens]);
 
   const handleNewTab = useCallback(() => {
-    props.Screens.newScreen();
+    props.Toolbar.setNewModeTarget('screen');
+    props.Toolbar.setShowNewDocumentMode(true);
     props.Toolbar.setCtrlKey(false);
-  }, [props.Screens, props.Toolbar]);
+  }, [props.Toolbar]);
 
   const handleRemoveTab = useCallback((idx: number) => {
     props.Screens.removeScreen(idx);
@@ -518,18 +519,20 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
 
   return (
     <div className={styles.tabHeadings}>
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-        <SortableContext items={props.screens} strategy={horizontalListSortingStrategy}>
-          <div className={styles.tabs}>
-            {lis}
-            <NewTabButton
-              dims={props.newScreenSize}
-              Toolbar={props.Toolbar}
-              onClick={handleNewTab}
-            />
-          </div>
-        </SortableContext>
-      </DndContext>
+      <div className={styles.tabsScroller}>
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <SortableContext items={props.screens} strategy={horizontalListSortingStrategy}>
+            <div className={styles.tabs}>
+              {lis}
+              <NewTabButton
+                dims={props.newScreenSize}
+                Toolbar={props.Toolbar}
+                onClick={handleNewTab}
+              />
+            </div>
+          </SortableContext>
+        </DndContext>
+      </div>
     </div>
   );
 }

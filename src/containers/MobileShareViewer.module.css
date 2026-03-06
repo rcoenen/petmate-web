@@ -113,9 +113,24 @@
   color: #9c9c9c;
 }
 
+.notice {
+  width: 100%;
+  max-width: 520px;
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #aaa;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
 .fullscreen .header,
 .fullscreen .controls,
-.fullscreen .meta {
+.fullscreen .meta,
+.fullscreen .notice {
   display: none;
 }
 

@@ -311,6 +311,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       <div className={s.meta}>
         40x25 · {mode}
       </div>
+      <p className={s.notice}>Mobile viewer only. Open this link on a desktop browser to use the full editor.</p>
     </div>
   );
 }

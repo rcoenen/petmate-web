@@ -1,5 +1,5 @@
 
-import { loadMarqCFramebuf, loadD64Framebuf, loadSeq, loadSDD, loadVCE } from './importers'
+import { loadMarqCFramebuf, loadD64Framebuf, loadSeq, loadSDD, loadVCE, analyzeVCE } from './importers'
 import {
   savePNG,
   saveMarqC,
@@ -381,7 +381,15 @@ export async function dialogImportFile(type: FileFormat, importFile: (fbs: Frame
       if (fbs.length > 0) importFile(fbs);
     } else {
       const { data } = await pickAndReadFile(`.${type.ext}`);
-      const fbs = await loadFramebuf(new Uint8Array(data), ext);
+      const bytes = new Uint8Array(data);
+      if (type.ext === 'vce') {
+        const analysis = analyzeVCE(bytes);
+        if (analysis.hasUnsupportedCharsetMode) {
+          await showAlert('Sorry, cannot work with non-standard PETSCII chars (custom chars used). Import aborted.');
+          return;
+        }
+      }
+      const fbs = await loadFramebuf(bytes, ext);
       if (fbs.length > 0) importFile(fbs);
     }
   } catch(_e) {

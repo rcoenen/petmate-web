@@ -110,6 +110,14 @@ export function dispatchMenuCommand(
           dispatch(ReduxRoot.actions.importFramebufsAppend(framebufs));
         });
       return;
+    case 'load-demo-three-graces':
+      fetch(import.meta.env.BASE_URL + 'demo/The_Three_Graces.sdd')
+        .then(r => r.text())
+        .then(text => {
+          const framebufs = loadSDD(text);
+          dispatch(ReduxRoot.actions.importFramebufsAppend(framebufs));
+        });
+      return;
     case 'preferences':
       dispatch(Toolbar.actions.setShowSettings(true));
       return;

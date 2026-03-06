@@ -16,6 +16,7 @@ const shortcuts: Shortcut[] = [
   { key: 'o', ctrl: true, cmd: 'open' },
   { key: 's', ctrl: true, shift: false, cmd: 'save' },
   { key: 's', ctrl: true, shift: true,  cmd: 'save-as' },
+  { key: 'u', ctrl: true, shift: true,  cmd: 'share-url' },
   { key: 'z', ctrl: true, cmd: 'undo' },
   { key: 'y', ctrl: true, cmd: 'redo' },
   { key: 'p', ctrl: true, cmd: 'preferences' },

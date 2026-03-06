@@ -51,6 +51,9 @@ export function dispatchMenuCommand(
     case 'save':
       dispatch(ReduxRoot.actions.fileSaveWorkspace());
       return;
+    case 'share-url':
+      dispatch(ReduxRoot.actions.shareURL());
+      return;
     case 'export-png':
       dispatchExport(dispatch, formats.png);
       return;

@@ -64,6 +64,7 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
       { separator: true },
       { label: 'Save',          cmd: 'save',      accelerator: 'Ctrl+S' },
       { label: 'Save As...',    cmd: 'save-as',   accelerator: 'Ctrl+Shift+S' },
+      { label: 'Share URL',     cmd: 'share-url', accelerator: 'Ctrl+Shift+U' },
       { separator: true },
       { label: 'Convert Image...', cmd: 'convert-image' },
       { separator: true },

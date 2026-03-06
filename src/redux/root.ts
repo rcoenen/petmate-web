@@ -23,7 +23,7 @@ import * as settings from './settings'
 import * as workspace from './workspace'
 import * as screensSelectors from '../redux/screensSelectors'
 import { Toolbar } from './toolbar'
-import { showAlert, showConfirm } from '../utils/dialog'
+import { showAlert, showConfirm, showManualCopyDialog, showToast } from '../utils/dialog'
 import {
   dialogLoadWorkspace,
   dialogSaveAsWorkspace,
@@ -35,6 +35,8 @@ import {
 } from '../utils'
 
 import { importFramebufs } from './workspace'
+import { framebufToShareURL } from '../utils/pss1'
+import { CHARSET_LOWER, CHARSET_UPPER } from './editor'
 
 export const RESET_STATE = 'RESET_STATE'
 export const LOAD_WORKSPACE = 'LOAD_WORKSPACE'
@@ -210,6 +212,47 @@ export const actions = {
       }
       dialogExportFile(amendedFormatOptions, framebufs, state.customFonts, palette);
     }
+  },
+
+  shareURL: (): RootStateThunk => {
+    return async (_dispatch, getState) => {
+      const state = getState();
+      const framebufIndex = screensSelectors.getCurrentScreenFramebufIndex(state);
+      if (framebufIndex === null) {
+        return;
+      }
+      const framebuf = selectors.getFramebufByIndex(state, framebufIndex);
+      if (!framebuf) {
+        return;
+      }
+      if (framebuf.width !== 40 || framebuf.height !== 25) {
+        await showAlert('Only 40x25 screens can be shared via URL.');
+        return;
+      }
+      if (framebuf.charset !== CHARSET_UPPER && framebuf.charset !== CHARSET_LOWER) {
+        await showAlert('Screens using custom fonts cannot be shared via URL.');
+        return;
+      }
+
+      let url: string;
+      try {
+        url = framebufToShareURL(framebuf);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await showAlert(`Could not build share URL.\n\n${msg}`);
+        return;
+      }
+
+      try {
+        if (!window.isSecureContext || !navigator.clipboard?.writeText) {
+          throw new Error('Clipboard API unavailable.');
+        }
+        await navigator.clipboard.writeText(url);
+        showToast('Share URL copied to clipboard.');
+      } catch {
+        await showManualCopyDialog(url);
+      }
+    };
   },
 
   resetState: (): RootStateThunk => {

@@ -23,6 +23,11 @@
   font-size: 12px;
 }
 
+.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 .brightnessText {
   color: #888;
 }

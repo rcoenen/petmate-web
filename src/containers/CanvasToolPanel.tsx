@@ -14,8 +14,8 @@ interface Props {
 }
 
 function CanvasToolPanel({ canvasGrid, canvasGridBrightness, setCanvasGrid, setCanvasGridBrightness }: Props) {
-  const steps = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
-  const sliderIndex = Math.round(canvasGridBrightness * 10);
+  // Slider 1–10, where value N maps to brightness N/10
+  const sliderValue = Math.max(1, Math.round(canvasGridBrightness * 10));
 
   return (
     <>
@@ -27,21 +27,20 @@ function CanvasToolPanel({ canvasGrid, canvasGridBrightness, setCanvasGrid, setC
         />
         <span>Grid</span>
       </label>
-      {canvasGrid && (
-        <label className={s.brightnessLabel}>
-          <span className={s.brightnessText}>Brightness</span>
-          <input
-            type="range"
-            className={s.brightnessSlider}
-            min={0}
-            max={10}
-            step={1}
-            value={sliderIndex}
-            onChange={e => setCanvasGridBrightness(steps[parseInt(e.target.value)])}
-          />
-          <span className={s.brightnessValue}>{Math.round(canvasGridBrightness * 100)}%</span>
-        </label>
-      )}
+      <label className={`${s.brightnessLabel} ${!canvasGrid ? s.disabled : ''}`}>
+        <span className={s.brightnessText}>Brightness</span>
+        <input
+          type="range"
+          className={s.brightnessSlider}
+          min={1}
+          max={10}
+          step={1}
+          disabled={!canvasGrid}
+          value={sliderValue}
+          onChange={e => setCanvasGridBrightness(parseInt(e.target.value) / 10)}
+        />
+        <span className={s.brightnessValue}>{sliderValue}</span>
+      </label>
     </>
   );
 }

@@ -37,6 +37,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
   const renderBorders = true;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLandscape, setIsLandscape] = useState(window.matchMedia('(orientation: landscape)').matches);
@@ -51,6 +52,10 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     startZoom: number;
     startMidX: number;
     startMidY: number;
+    startLocalX: number;
+    startLocalY: number;
+    baseLeft: number;
+    baseTop: number;
     startPanX: number;
     startPanY: number;
     lastTapTime: number;
@@ -60,6 +65,10 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     startZoom: 1,
     startMidX: 0,
     startMidY: 0,
+    startLocalX: 0,
+    startLocalY: 0,
+    baseLeft: 0,
+    baseTop: 0,
     startPanX: 0,
     startPanY: 0,
     lastTapTime: 0,
@@ -171,11 +180,16 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       if (e.touches.length === 1 && zoom > 1) {
         // Single-finger pan when zoomed in
         const t = e.touches[0];
+        const stageRect = stageRef.current?.getBoundingClientRect();
         gestureRef.current = {
           ...gestureRef.current,
           active: true,
           startMidX: t.clientX,
           startMidY: t.clientY,
+          startLocalX: 0,
+          startLocalY: 0,
+          baseLeft: stageRect ? stageRect.left - pan.x : 0,
+          baseTop: stageRect ? stageRect.top - pan.y : 0,
           startPanX: pan.x,
           startPanY: pan.y,
           startDistance: 0,
@@ -189,6 +203,9 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const mid = midpoint(t1, t2);
+      const stageRect = stageRef.current?.getBoundingClientRect();
+      const localX = stageRect ? (mid.x - stageRect.left) / zoom : 0;
+      const localY = stageRect ? (mid.y - stageRect.top) / zoom : 0;
       gestureRef.current = {
         ...gestureRef.current,
         active: true,
@@ -196,6 +213,10 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
         startZoom: zoom,
         startMidX: mid.x,
         startMidY: mid.y,
+        startLocalX: localX,
+        startLocalY: localY,
+        baseLeft: stageRect ? stageRect.left - pan.x : 0,
+        baseTop: stageRect ? stageRect.top - pan.y : 0,
         startPanX: pan.x,
         startPanY: pan.y,
       };
@@ -227,8 +248,8 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       const nextZoom = Math.max(1, Math.min(6, g.startZoom * (dist / g.startDistance)));
       setZoom(nextZoom);
       setPan({
-        x: g.startPanX + (mid.x - g.startMidX),
-        y: g.startPanY + (mid.y - g.startMidY)
+        x: nextZoom <= 1 ? 0 : mid.x - g.baseLeft - (g.startLocalX * nextZoom),
+        y: nextZoom <= 1 ? 0 : mid.y - g.baseTop - (g.startLocalY * nextZoom),
       });
       e.preventDefault();
     };
@@ -318,9 +339,15 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     return {
       width: dims.imgWidth * scale,
       height: dims.imgHeight * scale,
-      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+      transform: `translate(${pan.x}px, ${pan.y}px)`,
     };
   }, [isFullscreen, dims.imgWidth, dims.imgHeight, pan.x, pan.y, zoom]);
+  const stageContentStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!isFullscreen) return undefined;
+    return {
+      transform: `scale(${zoom})`,
+    };
+  }, [isFullscreen, zoom]);
   const normalStageStyle = useMemo<React.CSSProperties>(() => ({
     aspectRatio: `${dims.imgWidth} / ${dims.imgHeight}`,
   }), [dims.imgHeight, dims.imgWidth]);
@@ -372,19 +399,21 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
         style={{ backgroundColor: borderCssColor }}
         onDoubleClick={toggleFullscreen}
       >
-        <div className={s.stage} style={isFullscreen ? stageStyle : normalStageStyle}>
-          <canvas
-            ref={canvasRef}
-            className={s.canvas}
-            width={dims.imgWidth}
-            height={dims.imgHeight}
-          />
-          {showGrid && (
-            <div
-              className={s.gridOverlay}
-              style={gridOverlayStyle}
+        <div ref={stageRef} className={s.stage} style={isFullscreen ? stageStyle : normalStageStyle}>
+          <div className={s.stageContent} style={stageContentStyle}>
+            <canvas
+              ref={canvasRef}
+              className={s.canvas}
+              width={dims.imgWidth}
+              height={dims.imgHeight}
             />
-          )}
+            {showGrid && (
+              <div
+                className={s.gridOverlay}
+                style={gridOverlayStyle}
+              />
+            )}
+          </div>
         </div>
       </div>
       <div className={s.infoBlock}>

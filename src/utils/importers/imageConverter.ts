@@ -13,6 +13,10 @@ import {
   disposeStandardConverterWorkers,
   runStandardConversionInWorkers,
 } from './imageConverterStandardWorkerPool';
+import {
+  disposeModeConverterWorkers,
+  runModeConversionInWorkers,
+} from './imageConverterModeWorkerPool';
 
 const CANVAS_WIDTH = 320;
 const CANVAS_HEIGHT = 200;
@@ -101,7 +105,7 @@ function adjustedPixelToPerceptual(
 
 // --- Palettes ---
 
-interface PaletteColor {
+export interface PaletteColor {
   r: number;
   g: number;
   b: number;
@@ -128,7 +132,12 @@ function buildPaletteColors(hex: string[]): PaletteColor[] {
   });
 }
 
-interface PaletteMetricData {
+export function buildPaletteColorsById(paletteId: string): PaletteColor[] {
+  const paletteDef = PALETTES.find(p => p.id === paletteId) ?? PALETTES[0];
+  return buildPaletteColors(paletteDef.hex);
+}
+
+export interface PaletteMetricData {
   pL: Float64Array;
   pA: Float64Array;
   pB: Float64Array;
@@ -136,7 +145,7 @@ interface PaletteMetricData {
   maxPairDiff: number;
 }
 
-function buildPaletteMetricData(palette: PaletteColor[]): PaletteMetricData {
+export function buildPaletteMetricData(palette: PaletteColor[]): PaletteMetricData {
   const pL = new Float64Array(16);
   const pA = new Float64Array(16);
   const pB = new Float64Array(16);
@@ -235,14 +244,14 @@ export interface ConversionOutputs {
   previewMcm?: ImageData;
 }
 
-interface AlignmentOffset {
+export interface AlignmentOffset {
   x: number;
   y: number;
 }
 
 type BitPairPositionSets = [Uint8Array, Uint8Array, Uint8Array, Uint8Array];
 
-interface CharsetConversionContext {
+export interface CharsetConversionContext {
   ref: Uint8Array[];
   refSetCount: Int32Array;
   setPositions: Uint8Array[];
@@ -276,7 +285,7 @@ interface FittedImage {
   rgba: Uint8ClampedArray;
 }
 
-interface PreprocessedFittedImage {
+export interface PreprocessedFittedImage {
   width: number;
   height: number;
   baseDx: number;
@@ -313,7 +322,12 @@ interface PetsciiResult {
 interface SolvedModeCandidate {
   result: PetsciiResult;
   conversion: ConversionResult;
-  preview: ImageData;
+  preview?: ImageData;
+  error: number;
+}
+
+export interface WorkerSolvedModeCandidate {
+  conversion: ConversionResult;
   error: number;
 }
 
@@ -383,7 +397,7 @@ function buildRefMcmData(ref: Uint8Array[]): {
   return { refMcm, refMcmBpCount, refMcmPositions };
 }
 
-function buildCharsetConversionContext(fontBits: number[], includeMcm: boolean): CharsetConversionContext {
+export function buildCharsetConversionContext(fontBits: number[], includeMcm: boolean): CharsetConversionContext {
   const ref = buildRefChars(fontBits);
   const setPositions = buildSetPositions(ref);
   const refSetCount = new Int32Array(setPositions.map(positions => positions.length));
@@ -1398,7 +1412,7 @@ async function solveEcmForCombo(
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
-  palette: PaletteColor[],
+  palette: PaletteColor[] | undefined,
   onProgress: ProgressCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate> {
@@ -1446,7 +1460,9 @@ async function solveEcmForCombo(
     best = pickBetterModeCandidate(best, {
       result: { ...solved, bgIndices },
       conversion,
-      preview: renderPreview({ ...solved, bgIndices }, palette, context.ref, orderedBgs[0], orderedBgs, 'ecm'),
+      preview: palette
+        ? renderPreview({ ...solved, bgIndices }, palette, context.ref, orderedBgs[0], orderedBgs, 'ecm')
+        : undefined,
       error: solved.totalError,
     });
   }
@@ -1459,7 +1475,7 @@ async function solveMcmForCombo(
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
-  palette: PaletteColor[],
+  palette: PaletteColor[] | undefined,
   onProgress: ProgressCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate> {
@@ -1515,12 +1531,53 @@ async function solveMcmForCombo(
     best = pickBetterModeCandidate(best, {
       result: solved,
       conversion,
-      preview: renderMcmPreview(solved, palette, context.ref, context.refMcm!, bg, mc1, mc2),
+      preview: palette
+        ? renderMcmPreview(solved, palette, context.ref, context.refMcm!, bg, mc1, mc2)
+        : undefined,
       error: solved.totalError,
     });
   }
 
   return best!;
+}
+
+export async function solveModeOffsetWorker(
+  mode: 'ecm' | 'mcm',
+  preprocessed: PreprocessedFittedImage,
+  settings: ConverterSettings,
+  contexts: Record<ConverterCharset, CharsetConversionContext>,
+  metrics: PaletteMetricData,
+  offset: AlignmentOffset,
+  onProgress: ProgressCallback,
+  shouldCancel?: () => boolean
+): Promise<WorkerSolvedModeCandidate | undefined> {
+  throwIfCancelled(shouldCancel);
+  const analysis = analyzeAlignedSourceImage(
+    preprocessed,
+    metrics,
+    settings,
+    mode === 'mcm',
+    offset.x,
+    offset.y
+  );
+  throwIfCancelled(shouldCancel);
+
+  let best: SolvedModeCandidate | undefined;
+  for (const charset of ['upper', 'lower'] as const) {
+    const context = contexts[charset];
+    const solved = mode === 'ecm'
+      ? await solveEcmForCombo(analysis, context, metrics, settings, undefined, onProgress, shouldCancel)
+      : await solveMcmForCombo(analysis, context, metrics, settings, undefined, onProgress, shouldCancel);
+    solved.conversion.charset = charset;
+    best = pickBetterModeCandidate(best, solved);
+  }
+
+  return best
+    ? {
+        conversion: best.conversion,
+        error: best.error,
+      }
+    : undefined;
 }
 
 // --- Preview Rendering ---
@@ -1612,6 +1669,51 @@ function renderMcmPreview(
 
 export type ProgressCallback = (stage: string, detail: string, pct: number) => void;
 export type StandardBackendCallback = (backend: StandardAccelerationPath) => void;
+
+function renderSolvedModePreview(
+  candidate: Pick<SolvedModeCandidate, 'conversion' | 'error'>,
+  palette: PaletteColor[],
+  contexts: Record<ConverterCharset, CharsetConversionContext>
+): ImageData {
+  const result: PetsciiResult = {
+    screencodes: candidate.conversion.screencodes,
+    colors: candidate.conversion.colors,
+    bgIndices: candidate.conversion.bgIndices,
+    totalError: candidate.error,
+  };
+  const context = contexts[candidate.conversion.charset];
+  if (candidate.conversion.mode === 'mcm') {
+    return renderMcmPreview(
+      result,
+      palette,
+      context.ref,
+      context.refMcm!,
+      candidate.conversion.backgroundColor,
+      candidate.conversion.mcmSharedColors[0],
+      candidate.conversion.mcmSharedColors[1]
+    );
+  }
+  return renderPreview(
+    result,
+    palette,
+    context.ref,
+    candidate.conversion.backgroundColor,
+    candidate.conversion.mode === 'ecm' ? candidate.conversion.ecmBgColors : [],
+    candidate.conversion.mode
+  );
+}
+
+function finalizeSolvedModeCandidate(
+  candidate: SolvedModeCandidate,
+  palette: PaletteColor[],
+  contexts: Record<ConverterCharset, CharsetConversionContext>
+): SolvedModeCandidate {
+  if (candidate.preview) return candidate;
+  return {
+    ...candidate,
+    preview: renderSolvedModePreview(candidate, palette, contexts),
+  };
+}
 
 function toSolvedModeCandidate(
   candidate: StandardSolvedModeCandidate,
@@ -1729,6 +1831,123 @@ async function solveStandardAcrossCombos(
   );
 }
 
+function toSolvedModeCandidateFromWorker(
+  candidate: WorkerSolvedModeCandidate,
+  palette: PaletteColor[],
+  contexts: Record<ConverterCharset, CharsetConversionContext>
+): SolvedModeCandidate {
+  return finalizeSolvedModeCandidate(
+    {
+      result: {
+        screencodes: candidate.conversion.screencodes,
+        colors: candidate.conversion.colors,
+        bgIndices: candidate.conversion.bgIndices,
+        totalError: candidate.error,
+      },
+      conversion: candidate.conversion,
+      error: candidate.error,
+    },
+    palette,
+    contexts
+  );
+}
+
+async function solveModeAcrossOffsetsSequential(
+  mode: 'ecm' | 'mcm',
+  preprocessed: PreprocessedFittedImage,
+  settings: ConverterSettings,
+  contexts: Record<ConverterCharset, CharsetConversionContext>,
+  palette: PaletteColor[],
+  metrics: PaletteMetricData,
+  onProgress: ProgressCallback,
+  shouldCancel?: () => boolean
+): Promise<SolvedModeCandidate | undefined> {
+  const offsets = buildStandardAlignmentOffsets();
+  let best: WorkerSolvedModeCandidate | undefined;
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  onProgress('Alignment', `${mode.toUpperCase()} 0 of ${offsets.length}`, 0);
+
+  for (let offsetIndex = 0; offsetIndex < offsets.length; offsetIndex++) {
+    const offset = offsets[offsetIndex];
+    await yieldToUI(shouldCancel);
+    const solved = await solveModeOffsetWorker(
+      mode,
+      preprocessed,
+      settings,
+      contexts,
+      metrics,
+      offset,
+      createScopedProgress(
+        onProgress,
+        Math.round((offsetIndex / Math.max(1, offsets.length)) * 100),
+        Math.max(1, Math.ceil(100 / offsets.length))
+      ),
+      shouldCancel
+    );
+    if (solved && (!best || solved.error < best.error)) {
+      best = solved;
+    }
+    onProgress(
+      'Alignment',
+      `${mode.toUpperCase()} ${offsetIndex + 1} of ${offsets.length}`,
+      Math.round(((offsetIndex + 1) / Math.max(1, offsets.length)) * 100)
+    );
+  }
+
+  const elapsedMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+  console.info(`[TruSkii3000] ${mode.toUpperCase()} conversion finished.`, {
+    backend: 'js',
+    alignments: offsets.length,
+    elapsedMs: Math.round(elapsedMs),
+    elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
+  });
+
+  return best ? toSolvedModeCandidateFromWorker(best, palette, contexts) : undefined;
+}
+
+async function solveModeAcrossOffsets(
+  mode: 'ecm' | 'mcm',
+  preprocessed: PreprocessedFittedImage,
+  settings: ConverterSettings,
+  contexts: Record<ConverterCharset, CharsetConversionContext>,
+  palette: PaletteColor[],
+  metrics: PaletteMetricData,
+  fontBitsByCharset: ConverterFontBits,
+  onProgress: ProgressCallback,
+  shouldCancel?: () => boolean
+): Promise<SolvedModeCandidate | undefined> {
+  try {
+    const workerSolved = await runModeConversionInWorkers(
+      mode,
+      preprocessed,
+      settings,
+      fontBitsByCharset,
+      onProgress,
+      shouldCancel
+    );
+    if (workerSolved) {
+      return toSolvedModeCandidateFromWorker(workerSolved, palette, contexts);
+    }
+  } catch (error) {
+    if (error instanceof ConversionCancelledError) {
+      throw error;
+    }
+    console.warn(`${mode.toUpperCase()} worker acceleration failed; falling back to the single-threaded path.`, error);
+    disposeModeConverterWorkers();
+  }
+
+  return await solveModeAcrossOffsetsSequential(
+    mode,
+    preprocessed,
+    settings,
+    contexts,
+    palette,
+    metrics,
+    onProgress,
+    shouldCancel
+  );
+}
+
 async function solveModeAcrossCombos(
   mode: 'standard' | 'ecm' | 'mcm',
   preprocessed: PreprocessedFittedImage,
@@ -1754,45 +1973,17 @@ async function solveModeAcrossCombos(
       shouldCancel
     );
   }
-
-  const offsets = buildStandardAlignmentOffsets();
-  const combos: { charset: ConverterCharset; offset: AlignmentOffset }[] = [];
-  for (const offset of offsets) {
-    combos.push({ charset: 'upper', offset });
-    combos.push({ charset: 'lower', offset });
-  }
-
-  let best: SolvedModeCandidate | undefined;
-  for (let comboIndex = 0; comboIndex < combos.length; comboIndex++) {
-    const combo = combos[comboIndex];
-    const comboPct = Math.round((comboIndex / Math.max(1, combos.length)) * 100);
-    onProgress(
-      'Alignment',
-      `${mode.toUpperCase()} ${combo.charset} align (${combo.offset.x}, ${combo.offset.y}) ${comboIndex + 1} of ${combos.length}`,
-      comboPct
-    );
-    await yieldToUI(shouldCancel);
-
-    throwIfCancelled(shouldCancel);
-    const analysis = analyzeAlignedSourceImage(preprocessed, metrics, settings, mode === 'mcm', combo.offset.x, combo.offset.y);
-    throwIfCancelled(shouldCancel);
-    const scopedProgress = createScopedProgress(onProgress, comboPct, Math.max(1, Math.ceil(100 / combos.length)));
-    const context = contexts[combo.charset];
-
-    let solved: SolvedModeCandidate | undefined;
-    if (mode === 'ecm') {
-      solved = await solveEcmForCombo(analysis, context, metrics, settings, palette, scopedProgress, shouldCancel);
-    } else {
-      solved = await solveMcmForCombo(analysis, context, metrics, settings, palette, scopedProgress, shouldCancel);
-    }
-
-    if (solved) {
-      solved.conversion.charset = combo.charset;
-      best = pickBetterModeCandidate(best, solved);
-    }
-  }
-
-  return best;
+  return await solveModeAcrossOffsets(
+    mode,
+    preprocessed,
+    settings,
+    contexts,
+    palette,
+    metrics,
+    fontBitsByCharset,
+    onProgress,
+    shouldCancel
+  );
 }
 
 // --- Top-level Orchestrator ---

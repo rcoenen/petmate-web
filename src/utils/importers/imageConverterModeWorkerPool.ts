@@ -1,22 +1,19 @@
 import type {
   ConverterFontBits,
   ConverterSettings,
-  StandardAccelerationPath,
-} from './imageConverter';
-import {
-  buildAlignmentOffsets,
-  ConversionCancelledError,
-} from './imageConverterStandardCore';
-import type {
-  AlignmentOffset,
+  PreprocessedFittedImage,
   ProgressCallback,
-  StandardPreprocessedImage,
-  StandardSolvedModeCandidate,
-} from './imageConverterStandardCore';
+  WorkerSolvedModeCandidate,
+} from './imageConverter';
+import { buildAlignmentOffsets, ConversionCancelledError } from './imageConverterStandardCore';
+import type { AlignmentOffset } from './imageConverterStandardCore';
 import type {
   ConverterWorkerRequestMessage,
   ConverterWorkerResponseMessage,
+  WorkerMode,
 } from './imageConverterWorkerProtocol';
+
+type SupportedMode = Exclude<WorkerMode, 'standard'>;
 
 type OffsetJob = {
   offsetId: number;
@@ -31,41 +28,29 @@ type WorkerSlot = {
   currentOffsetId: number | null;
 };
 
-type WorkerReadyStatus = {
-  workerId: number;
-  wasmEnabled: boolean;
-  wasmError?: string;
-};
-
 type ActiveRequest = {
   requestId: number;
+  mode: SupportedMode;
   queue: OffsetJob[];
   inflight: number;
   completed: number;
   total: number;
-  best?: StandardSolvedModeCandidate;
+  best?: WorkerSolvedModeCandidate;
   cancelled: boolean;
   cancelTimer: ReturnType<typeof setInterval> | null;
   startedAt: number;
   onProgress: ProgressCallback;
-  onStandardBackend?: (backend: StandardAccelerationPath) => void;
-  resolve: (result: StandardSolvedModeCandidate | undefined) => void;
+  resolve: (result: WorkerSolvedModeCandidate | undefined) => void;
   reject: (error: unknown) => void;
 };
 
 function buildOffsetJobs(): OffsetJob[] {
-  const jobs: OffsetJob[] = [];
-  let offsetId = 0;
-  for (const offset of buildAlignmentOffsets()) {
-    jobs.push({ offsetId: offsetId++, offset });
-  }
-  return jobs;
+  return buildAlignmentOffsets().map((offset, offsetId) => ({ offsetId, offset }));
 }
 
-class StandardWorkerPool {
+class ModeWorkerPool {
   private readonly slots: WorkerSlot[];
   private readonly ready: Promise<void>;
-  private backend: StandardAccelerationPath = 'js';
   private nextRequestId = 1;
   private activeRequest: ActiveRequest | null = null;
 
@@ -80,16 +65,12 @@ class StandardWorkerPool {
       currentOffsetId: null,
     }));
 
-    this.ready = Promise.all(this.slots.map(slot => new Promise<WorkerReadyStatus>((resolve, reject) => {
+    this.ready = Promise.all(this.slots.map(slot => new Promise<void>((resolve, reject) => {
       const handleMessage = (event: MessageEvent<ConverterWorkerResponseMessage>) => {
         if (event.data.type === 'ready') {
           slot.worker.removeEventListener('message', handleMessage);
           slot.worker.removeEventListener('error', handleError);
-          resolve({
-            workerId: slot.id,
-            wasmEnabled: event.data.wasmEnabled,
-            wasmError: event.data.wasmError,
-          });
+          resolve();
         }
       };
       const handleError = (event: ErrorEvent) => {
@@ -103,26 +84,7 @@ class StandardWorkerPool {
         type: 'init',
         fontBitsByCharset,
       } satisfies ConverterWorkerRequestMessage);
-    }))).then(workerStatuses => {
-      this.backend = workerStatuses.every(status => status.wasmEnabled) ? 'wasm' : 'js';
-      if (this.backend === 'wasm') {
-        console.info('[TruSkii3000] Standard worker pool ready with WASM in all workers.', {
-          workerCount: workerStatuses.length,
-          workers: workerStatuses.map(status => ({
-            workerId: status.workerId,
-            backend: 'wasm',
-          })),
-        });
-      } else {
-        console.warn('[TruSkii3000] Standard worker pool using JS fallback.', {
-          workerCount: workerStatuses.length,
-          workers: workerStatuses.map(status => ({
-            workerId: status.workerId,
-            backend: status.wasmEnabled ? 'wasm' : 'js',
-            wasmError: status.wasmError,
-          })),
-        });
-      }
+    }))).then(() => {
       this.slots.forEach(slot => {
         slot.worker.onmessage = event => this.handleWorkerMessage(slot, event.data as ConverterWorkerResponseMessage);
         slot.worker.onerror = event => this.handleWorkerError(slot, event);
@@ -131,23 +93,24 @@ class StandardWorkerPool {
   }
 
   async run(
-    preprocessed: StandardPreprocessedImage,
+    mode: SupportedMode,
+    preprocessed: PreprocessedFittedImage,
     settings: ConverterSettings,
     onProgress: ProgressCallback,
-    onStandardBackend?: (backend: StandardAccelerationPath) => void,
     shouldCancel?: () => boolean
-  ): Promise<StandardSolvedModeCandidate | undefined> {
+  ): Promise<WorkerSolvedModeCandidate | undefined> {
     await this.ready;
 
     if (this.activeRequest) {
       this.cancelActiveRequest();
-      throw new Error('Standard worker pool already has an active request.');
+      throw new Error('Mode worker pool already has an active request.');
     }
 
     const requestId = this.nextRequestId++;
     const queue = buildOffsetJobs();
     const active: ActiveRequest = {
       requestId,
+      mode,
       queue,
       inflight: 0,
       completed: 0,
@@ -156,12 +119,10 @@ class StandardWorkerPool {
       cancelTimer: null,
       startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
       onProgress,
-      onStandardBackend,
       resolve: () => {},
       reject: () => {},
     };
     this.activeRequest = active;
-    onStandardBackend?.(this.backend);
 
     this.slots.forEach(slot => {
       slot.worker.postMessage({
@@ -172,7 +133,7 @@ class StandardWorkerPool {
       } satisfies ConverterWorkerRequestMessage);
     });
 
-    return await new Promise<StandardSolvedModeCandidate | undefined>((resolve, reject) => {
+    return await new Promise<WorkerSolvedModeCandidate | undefined>((resolve, reject) => {
       active.resolve = resolve;
       active.reject = reject;
       active.cancelTimer = shouldCancel ? setInterval(() => {
@@ -204,7 +165,7 @@ class StandardWorkerPool {
       slot.worker.postMessage({
         type: 'solve-offset',
         requestId: active.requestId,
-        mode: 'standard',
+        mode: active.mode,
         offsetId: job.offsetId,
         offset: job.offset,
       } satisfies ConverterWorkerRequestMessage);
@@ -219,20 +180,23 @@ class StandardWorkerPool {
     }
 
     if (message.type === 'offset-result') {
+      if (message.mode !== active.mode) {
+        this.failActiveRequest(new Error(`Worker mode mismatch: expected ${active.mode}, got ${message.mode}`));
+        return;
+      }
       this.releaseSlot(slot);
       active.completed += 1;
       active.inflight -= 1;
-      const solved: StandardSolvedModeCandidate = {
+      const solved: WorkerSolvedModeCandidate = {
         conversion: message.conversion,
         error: message.error,
-        executionPath: this.backend,
       };
       if (!active.best || solved.error < active.best.error) {
         active.best = solved;
       }
       active.onProgress(
         'Alignment',
-        `STANDARD ${active.completed} of ${active.total}`,
+        `${active.mode.toUpperCase()} ${active.completed} of ${active.total}`,
         Math.round((active.completed / Math.max(1, active.total)) * 100)
       );
       this.fillIdleWorkers();
@@ -243,9 +207,7 @@ class StandardWorkerPool {
     if (message.type === 'cancelled') {
       if (slot.currentRequestId === active.requestId) {
         this.releaseSlot(slot);
-        if (active.inflight > 0) {
-          active.inflight -= 1;
-        }
+        if (active.inflight > 0) active.inflight -= 1;
       }
       this.maybeFinish();
       return;
@@ -253,9 +215,7 @@ class StandardWorkerPool {
 
     if (message.type === 'error') {
       this.releaseSlot(slot);
-      if (active.inflight > 0) {
-        active.inflight -= 1;
-      }
+      if (active.inflight > 0) active.inflight -= 1;
       this.failActiveRequest(new Error(message.error));
     }
   }
@@ -277,8 +237,7 @@ class StandardWorkerPool {
     if (active.completed === active.total && active.inflight === 0) {
       const result = active.best;
       const elapsedMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - active.startedAt;
-      console.info('[TruSkii3000] Standard conversion finished.', {
-        backend: this.backend,
+      console.info(`[TruSkii3000] ${active.mode.toUpperCase()} conversion finished.`, {
         alignments: active.total,
         elapsedMs: Math.round(elapsedMs),
         elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
@@ -344,35 +303,35 @@ class StandardWorkerPool {
   }
 }
 
-let poolPromise: Promise<StandardWorkerPool> | null = null;
+let poolPromise: Promise<ModeWorkerPool> | null = null;
 
 function supportsWorkerAcceleration(): boolean {
   return typeof Worker !== 'undefined';
 }
 
-async function getPool(fontBitsByCharset: ConverterFontBits): Promise<StandardWorkerPool> {
+async function getPool(fontBitsByCharset: ConverterFontBits): Promise<ModeWorkerPool> {
   if (!poolPromise) {
-    poolPromise = Promise.resolve(new StandardWorkerPool(fontBitsByCharset));
+    poolPromise = Promise.resolve(new ModeWorkerPool(fontBitsByCharset));
   }
   return await poolPromise;
 }
 
-export async function runStandardConversionInWorkers(
-  preprocessed: StandardPreprocessedImage,
+export async function runModeConversionInWorkers(
+  mode: SupportedMode,
+  preprocessed: PreprocessedFittedImage,
   settings: ConverterSettings,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
-  onStandardBackend?: (backend: StandardAccelerationPath) => void,
   shouldCancel?: () => boolean
-): Promise<StandardSolvedModeCandidate | undefined> {
+): Promise<WorkerSolvedModeCandidate | undefined> {
   if (!supportsWorkerAcceleration()) {
-    throw new Error('Standard worker acceleration is not supported.');
+    throw new Error(`${mode.toUpperCase()} worker acceleration is not supported.`);
   }
   const pool = await getPool(fontBitsByCharset);
-  return await pool.run(preprocessed, settings, onProgress, onStandardBackend, shouldCancel);
+  return await pool.run(mode, preprocessed, settings, onProgress, shouldCancel);
 }
 
-export function disposeStandardConverterWorkers() {
+export function disposeModeConverterWorkers() {
   if (!poolPromise) return;
   void poolPromise.then(pool => pool.dispose()).catch(() => {});
   poolPromise = null;

@@ -1,4 +1,15 @@
-import type { ConverterCharset } from './imageConverter';
+import {
+  buildCharsetConversionContext as buildModeCharsetConversionContext,
+  buildPaletteColorsById as buildModePaletteColorsById,
+  buildPaletteMetricData as buildModePaletteMetricData,
+  solveModeOffsetWorker,
+} from './imageConverter';
+import type {
+  CharsetConversionContext as ModeCharsetConversionContext,
+  ConverterCharset,
+  PaletteMetricData as ModePaletteMetricData,
+  PreprocessedFittedImage,
+} from './imageConverter';
 import {
   buildCharsetConversionContext,
   buildPaletteColorsById,
@@ -8,53 +19,70 @@ import {
 } from './imageConverterStandardCore';
 import type {
   CharsetConversionContext,
+  PaletteMetricData,
   StandardCandidateScoringKernel,
 } from './imageConverterStandardCore';
 import { StandardWasmKernel } from './imageConverterStandardWasm';
 import type {
-  StandardWorkerRequestMessage,
-  StandardWorkerResponseMessage,
+  ConverterWorkerRequestMessage,
+  ConverterWorkerResponseMessage,
 } from './imageConverterWorkerProtocol';
 
 type WorkerState = {
-  contexts: Record<ConverterCharset, CharsetConversionContext> | null;
+  standardContexts: Record<ConverterCharset, CharsetConversionContext> | null;
+  modeContexts: Record<ConverterCharset, ModeCharsetConversionContext> | null;
   activeRequests: Set<number>;
   requestData: Map<number, {
     preprocessed: Parameters<typeof solveStandardOffset>[0];
     settings: Parameters<typeof solveStandardOffset>[1];
   }>;
-  paletteCache: Map<string, ReturnType<typeof buildPaletteMetricData>>;
+  standardPaletteCache: Map<string, PaletteMetricData>;
+  modePaletteCache: Map<string, ModePaletteMetricData>;
   scoringKernel: StandardCandidateScoringKernel | null;
 };
 
 const state: WorkerState = {
-  contexts: null,
+  standardContexts: null,
+  modeContexts: null,
   activeRequests: new Set(),
   requestData: new Map(),
-  paletteCache: new Map(),
+  standardPaletteCache: new Map(),
+  modePaletteCache: new Map(),
   scoringKernel: null,
 };
 
-function post(message: StandardWorkerResponseMessage) {
+function post(message: ConverterWorkerResponseMessage) {
   self.postMessage(message);
 }
 
-function getMetrics(paletteId: string) {
-  const cached = state.paletteCache.get(paletteId);
+function getStandardMetrics(paletteId: string) {
+  const cached = state.standardPaletteCache.get(paletteId);
   if (cached) return cached;
   const metrics = buildPaletteMetricData(buildPaletteColorsById(paletteId));
-  state.paletteCache.set(paletteId, metrics);
+  state.standardPaletteCache.set(paletteId, metrics);
   return metrics;
 }
 
-self.onmessage = async (event: MessageEvent<StandardWorkerRequestMessage>) => {
+function getModeMetrics(paletteId: string) {
+  const cached = state.modePaletteCache.get(paletteId);
+  if (cached) return cached;
+  const metrics = buildModePaletteMetricData(buildModePaletteColorsById(paletteId));
+  state.modePaletteCache.set(paletteId, metrics);
+  return metrics;
+}
+
+self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
   const message = event.data;
 
   try {
     if (message.type === 'init') {
-      state.contexts = {
+      state.standardContexts = {
         upper: buildCharsetConversionContext(message.fontBitsByCharset.upper),
         lower: buildCharsetConversionContext(message.fontBitsByCharset.lower),
+      };
+      state.modeContexts = {
+        upper: buildModeCharsetConversionContext(message.fontBitsByCharset.upper, true),
+        lower: buildModeCharsetConversionContext(message.fontBitsByCharset.lower, true),
       };
       const wasm = await StandardWasmKernel.create();
       state.scoringKernel = wasm.kernel;
@@ -87,30 +115,47 @@ self.onmessage = async (event: MessageEvent<StandardWorkerRequestMessage>) => {
       return;
     }
 
-    if (message.type === 'solve-standard-offset') {
-      if (!state.contexts) {
+    if (message.type === 'solve-offset') {
+      if (!state.standardContexts || !state.modeContexts) {
         throw new Error('Worker not initialized');
       }
       const request = state.requestData.get(message.requestId);
       if (!request) {
         throw new Error(`Unknown worker request ${message.requestId}`);
       }
-      const result = await solveStandardOffset(
-        request.preprocessed,
-        request.settings,
-        state.contexts,
-        getMetrics(request.settings.paletteId),
-        message.offset,
-        state.scoringKernel ?? undefined,
-        () => !state.activeRequests.has(message.requestId)
-      );
+      const shouldCancel = () => !state.activeRequests.has(message.requestId);
+      const result = message.mode === 'standard'
+        ? await solveStandardOffset(
+            request.preprocessed,
+            request.settings,
+            state.standardContexts,
+            getStandardMetrics(request.settings.paletteId),
+            message.offset,
+            state.scoringKernel ?? undefined,
+            shouldCancel
+          )
+        : await solveModeOffsetWorker(
+            message.mode,
+            request.preprocessed as PreprocessedFittedImage,
+            request.settings,
+            state.modeContexts,
+            getModeMetrics(request.settings.paletteId),
+            message.offset,
+            () => {},
+            shouldCancel
+          );
       if (!state.activeRequests.has(message.requestId)) {
+        post({ type: 'cancelled', requestId: message.requestId, offsetId: message.offsetId });
+        return;
+      }
+      if (!result) {
         post({ type: 'cancelled', requestId: message.requestId, offsetId: message.offsetId });
         return;
       }
       post({
         type: 'offset-result',
         requestId: message.requestId,
+        mode: message.mode,
         offsetId: message.offsetId,
         conversion: result.conversion,
         error: result.error,

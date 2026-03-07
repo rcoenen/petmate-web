@@ -1,65 +1,74 @@
-import type { ConverterFontBits, ConverterSettings, ConversionResult } from './imageConverter';
+import type {
+  ConverterFontBits,
+  ConverterSettings,
+  ConversionResult,
+} from './imageConverter';
 import type { AlignmentOffset, StandardPreprocessedImage } from './imageConverterStandardCore';
+import type { PreprocessedFittedImage } from './imageConverter';
 
-export interface StandardWorkerInitMessage {
+export type WorkerMode = 'standard' | 'ecm' | 'mcm';
+
+export interface ConverterWorkerInitMessage {
   type: 'init';
   fontBitsByCharset: ConverterFontBits;
 }
 
-export interface StandardWorkerStartRequestMessage {
+export interface ConverterWorkerStartRequestMessage {
   type: 'start-request';
   requestId: number;
-  preprocessed: StandardPreprocessedImage;
+  preprocessed: StandardPreprocessedImage | PreprocessedFittedImage;
   settings: ConverterSettings;
 }
 
-export interface StandardWorkerSolveOffsetMessage {
-  type: 'solve-standard-offset';
+export interface ConverterWorkerSolveOffsetMessage {
+  type: 'solve-offset';
   requestId: number;
+  mode: WorkerMode;
   offsetId: number;
   offset: AlignmentOffset;
 }
 
-export interface StandardWorkerCancelMessage {
+export interface ConverterWorkerCancelMessage {
   type: 'cancel';
   requestId: number;
 }
 
-export type StandardWorkerRequestMessage =
-  | StandardWorkerInitMessage
-  | StandardWorkerStartRequestMessage
-  | StandardWorkerSolveOffsetMessage
-  | StandardWorkerCancelMessage;
+export type ConverterWorkerRequestMessage =
+  | ConverterWorkerInitMessage
+  | ConverterWorkerStartRequestMessage
+  | ConverterWorkerSolveOffsetMessage
+  | ConverterWorkerCancelMessage;
 
-export interface StandardWorkerReadyMessage {
+export interface ConverterWorkerReadyMessage {
   type: 'ready';
   wasmEnabled: boolean;
   wasmError?: string;
 }
 
-export interface StandardWorkerComboResultMessage {
+export interface ConverterWorkerOffsetResultMessage {
   type: 'offset-result';
   requestId: number;
+  mode: WorkerMode;
   offsetId: number;
   conversion: ConversionResult;
   error: number;
 }
 
-export interface StandardWorkerCancelledMessage {
+export interface ConverterWorkerCancelledMessage {
   type: 'cancelled';
   requestId: number;
   offsetId?: number;
 }
 
-export interface StandardWorkerErrorMessage {
+export interface ConverterWorkerErrorMessage {
   type: 'error';
   requestId?: number;
   offsetId?: number;
   error: string;
 }
 
-export type StandardWorkerResponseMessage =
-  | StandardWorkerReadyMessage
-  | StandardWorkerComboResultMessage
-  | StandardWorkerCancelledMessage
-  | StandardWorkerErrorMessage;
+export type ConverterWorkerResponseMessage =
+  | ConverterWorkerReadyMessage
+  | ConverterWorkerOffsetResultMessage
+  | ConverterWorkerCancelledMessage
+  | ConverterWorkerErrorMessage;

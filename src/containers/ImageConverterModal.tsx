@@ -639,7 +639,9 @@ export default function ImageConverterModal() {
       <div className={styles.container}>
         <div className={styles.titleBlock}>
           <h3 className={styles.title}>Convert Image to PETSCII</h3>
-          <div className={styles.titleSupport}>Powered by the TruSkii3000™ converter engine</div>
+          <div className={styles.titleSupport}>
+            Powered by the <span className={styles.engineBadge}>TruSkii3000™</span> converter engine
+          </div>
         </div>
 
         <div className={styles.topRow}>

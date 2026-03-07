@@ -19,6 +19,22 @@
   letter-spacing: 0.02em;
 }
 
+.engineBadge {
+  display: inline-block;
+  padding: 1px 9px 2px;
+  margin: 0 4px;
+  border: 1px solid rgba(158, 200, 175, 0.6);
+  border-radius: 999px;
+  background: rgba(56, 109, 78, 0.35);
+  color: #d8f0df;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
 .topRow {
   display: grid;
   grid-template-columns: minmax(280px, 320px) minmax(320px, 420px) max-content;

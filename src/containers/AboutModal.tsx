@@ -27,6 +27,9 @@ function AboutModal({ show, onClose }: Props) {
           conversion, multi-screen support — all in your browser, no install required.
         </p>
         <p className={styles.body}>
+          <span className={styles.engineBadge}>TruSkii3000™</span> image-to-PETSCII converter included.
+        </p>
+        <p className={styles.body}>
           Originally inspired by{' '}
           <a href="https://github.com/nurpax/petmate" target="_blank" rel="noreferrer">
             Petmate

@@ -3,22 +3,25 @@
 }
 
 .title {
-  margin: 0 0 12px 0;
+  margin: 0 0 16px 0;
   font-size: 16px;
   font-weight: bold;
 }
 
 .topRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(280px, 320px) minmax(320px, 420px) max-content;
   gap: 16px;
-  margin-bottom: 12px;
+  align-items: start;
+  justify-content: start;
+  margin-bottom: 16px;
 }
 
 .dropZoneWrapper {
-  width: 320px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  align-self: start;
+  min-width: 0;
 }
 
 .dropZoneHeading {
@@ -61,17 +64,21 @@
 }
 
 .settings {
-  width: 340px;
-  flex-shrink: 0;
+  margin: 0;
   border: 1px solid #555;
   border-radius: 4px;
   padding: 10px 12px;
+  min-width: 0;
+  width: min(100%, 420px);
+  box-sizing: border-box;
+  background: rgb(51, 51, 51);
 }
 
 .settings legend {
   font-size: 12px;
   color: #999;
   padding: 0 6px;
+  background: rgb(51, 51, 51);
 }
 
 .settingsRow {
@@ -82,18 +89,20 @@
 }
 
 .settingsRow label {
-  width: 100px;
+  width: 92px;
   text-align: right;
   font-size: 13px;
   flex-shrink: 0;
 }
 
 .settingsRow input[type="range"] {
-  flex: 1;
+  flex: 0 1 240px;
+  min-width: 140px;
 }
 
 .settingsRow select {
   flex: 1;
+  min-width: 0;
   background: #444;
   color: #ddd;
   border: 1px solid #666;
@@ -108,37 +117,78 @@
   font-family: monospace;
 }
 
-.bgPanel {
+.outputSection {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.modeOption {
+  display: flex;
   align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.modeOption input {
+  margin: 3px 0 0;
+}
+
+.modeText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.modeName {
+  font-size: 13px;
+  color: #ddd;
+}
+
+.modeDescription {
+  font-size: 11px;
+  color: #999;
+}
+
+.outputWarning {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #c5b48a;
+}
+
+.sideColumn {
+  display: grid;
+  grid-template-columns: max-content minmax(220px, 260px);
+  gap: 10px;
+  align-items: start;
+  justify-content: start;
+  min-width: 0;
+  width: max-content;
+}
+
+.outputPanel,
+.bgPanel {
+  margin: 0;
   border: 1px solid #555;
   border-radius: 4px;
   padding: 10px 12px;
-  align-self: flex-start;
+  box-sizing: border-box;
+  background: rgb(51, 51, 51);
 }
 
+.outputPanel legend,
 .bgPanel legend {
   font-size: 12px;
   color: #999;
   padding: 0 6px;
+  background: rgb(51, 51, 51);
 }
 
-.bgPanelLabel {
-  font-size: 11px;
-  color: #999;
-  margin-bottom: 4px;
-}
-
-.paletteSelect {
-  width: 100%;
-  background: #444;
-  color: #ddd;
-  border: 1px solid #666;
-  border-radius: 3px;
-  padding: 2px 4px;
-  font-size: 12px;
-  margin-bottom: 8px;
+.bgPanel {
+  width: fit-content;
+  min-width: 0;
+  justify-self: start;
+  padding: 10px;
 }
 
 .bgSwatches {
@@ -187,7 +237,7 @@
 }
 
 .progressContainer {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .progressLabel {
@@ -239,32 +289,84 @@
 }
 
 .previews {
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 320px));
+  gap: 16px;
   margin-bottom: 12px;
+  align-items: start;
   justify-content: center;
 }
 
 .previewPanel {
-  width: 320px;
-  flex-shrink: 0;
   text-align: center;
+  min-width: 0;
 }
 
 .previewPanel h4 {
-  margin: 0 0 6px 0;
+  margin: 0 0 8px 0;
   font-size: 13px;
 }
 
 .previewCanvas {
+  display: block;
   width: 100%;
   max-width: 320px;
+  margin: 0 auto;
   image-rendering: pixelated;
   border: 1px solid #555;
+  background: #111;
+}
+
+.previewPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 320 / 200;
+  margin: 0 auto;
+  padding: 16px;
+  box-sizing: border-box;
+  border: 1px dashed #666;
+  background: #1b1b1b;
+}
+
+.previewPlaceholderInner {
+  width: 100%;
+  max-width: 220px;
+  text-align: center;
+}
+
+.previewPlaceholderLabel {
+  font-size: 13px;
+  color: #ddd;
+  margin-bottom: 6px;
+}
+
+.previewPlaceholderDetail {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #999;
+  min-height: 30px;
+  margin-bottom: 10px;
+}
+
+.previewPlaceholderBar {
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.previewPlaceholderFill {
+  height: 100%;
+  background: #6c9;
+  transition: width 0.2s;
 }
 
 .importBtn {
-  margin-top: 6px;
+  margin-top: 10px;
+  min-width: 160px;
   padding: 6px 16px;
   background: #4a7;
   color: #fff;
@@ -279,6 +381,12 @@
 }
 
 .ecmNote {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+}
+
+.previewNote {
   font-size: 11px;
   color: #999;
   margin-top: 4px;
@@ -299,4 +407,42 @@
 
 .closeBtn:hover {
   background: #666;
+}
+
+@media (max-width: 1080px) {
+  .topRow {
+    grid-template-columns: minmax(280px, 320px) minmax(320px, 1fr);
+  }
+
+  .sideColumn {
+    grid-column: 1 / -1;
+    grid-template-columns: max-content minmax(220px, 260px);
+    align-items: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .topRow {
+    grid-template-columns: 1fr;
+  }
+
+  .sideColumn {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .bgPanel {
+    width: auto;
+  }
+
+  .settingsRow {
+    flex-wrap: wrap;
+  }
+
+  .settingsRow label {
+    width: auto;
+    min-width: 92px;
+    text-align: left;
+  }
 }

@@ -1,9 +1,10 @@
 // Image-to-PETSCII converter
 // Ported from c64-image-to-petscii by Rob
 // Uses CIE Lab perceptual color matching, saliency-weighted character
-// optimization, and supports Standard (256 chars) and ECM (64 chars, 4 bg) modes.
+// optimization, and supports Standard, ECM, and MCM conversion modes.
 
 import { C64_PALETTES } from '../c64Palettes';
+import { mcmForegroundColor, mcmIsMulticolorCell, mcmResolveBitPairColor } from '../mcm';
 
 // --- Color Science ---
 
@@ -115,6 +116,9 @@ export interface ConverterSettings {
   lumMatchWeight: number;     // 0–50
   paletteId: string;
   manualBgColor: number | null;  // null = auto, 0-15 = forced
+  outputStandard: boolean;
+  outputEcm: boolean;
+  outputMcm: boolean;
 }
 
 export const CONVERTER_DEFAULTS: ConverterSettings = {
@@ -124,6 +128,9 @@ export const CONVERTER_DEFAULTS: ConverterSettings = {
   lumMatchWeight: 12,
   paletteId: 'colodore',
   manualBgColor: null,
+  outputStandard: true,
+  outputEcm: false,
+  outputMcm: false,
 };
 
 export const CONVERTER_PRESETS = [
@@ -152,7 +159,17 @@ export interface ConversionResult {
   backgroundColor: number;
   ecmBgColors: number[];   // ECM: 4 bg colors; Standard: empty
   bgIndices: number[];     // ECM: per-cell bg index; Standard: empty
-  mode: 'standard' | 'ecm';
+  mcmSharedColors: number[]; // MCM: [mc1, mc2]; Standard/ECM: empty
+  mode: 'standard' | 'ecm' | 'mcm';
+}
+
+export interface ConversionOutputs {
+  standard?: ConversionResult;
+  ecm?: ConversionResult;
+  mcm?: ConversionResult;
+  previewStd?: ImageData;
+  previewEcm?: ImageData;
+  previewMcm?: ImageData;
 }
 
 // --- Reference Characters from ROM font ---
@@ -170,6 +187,35 @@ function buildRefChars(fontBits: number[]): boolean[][] {
     ref.push(char);
   }
   return ref;
+}
+
+interface McmReferenceData {
+  refMcm: Uint8Array[];
+  refMcmBpCount: Int32Array[];
+}
+
+function buildRefMcmData(ref: boolean[][]): McmReferenceData {
+  const refMcm: Uint8Array[] = [];
+  const refMcmBpCount: Int32Array[] = [];
+
+  for (let ch = 0; ch < 256; ch++) {
+    const bits = new Uint8Array(32);
+    const counts = new Int32Array(4);
+    for (let py = 0; py < 8; py++) {
+      for (let mpx = 0; mpx < 4; mpx++) {
+        const left = ref[ch][py * 8 + mpx * 2] ? 1 : 0;
+        const right = ref[ch][py * 8 + mpx * 2 + 1] ? 1 : 0;
+        const bitPair = (left << 1) | right;
+        const idx = py * 4 + mpx;
+        bits[idx] = bitPair;
+        counts[bitPair]++;
+      }
+    }
+    refMcm.push(bits);
+    refMcmBpCount.push(counts);
+  }
+
+  return { refMcm, refMcmBpCount };
 }
 
 // --- Image Resize ---
@@ -304,6 +350,99 @@ interface PetsciiResult {
   totalError: number;
 }
 
+interface PreparedCellData {
+  chunkL: Float64Array;
+  chunkA: Float64Array;
+  chunkBv: Float64Array;
+  weights: Float64Array;
+  srcAvgL: number;
+}
+
+function prepareCellData(
+  srcData: Uint8ClampedArray,
+  cx: number,
+  cy: number,
+  settings: ConverterSettings
+): PreparedCellData {
+  const chunkR = new Float64Array(64);
+  const chunkG = new Float64Array(64);
+  const chunkB_ = new Float64Array(64);
+
+  for (let py = 0; py < 8; py++) {
+    for (let px = 0; px < 8; px++) {
+      const si = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 4;
+      const ci = py * 8 + px;
+      chunkR[ci] = srcData[si];
+      chunkG[ci] = srcData[si + 1];
+      chunkB_[ci] = srcData[si + 2];
+    }
+  }
+
+  for (let ci = 0; ci < 64; ci++) {
+    let r = chunkR[ci] * settings.brightnessFactor;
+    let g = chunkG[ci] * settings.brightnessFactor;
+    let b = chunkB_[ci] * settings.brightnessFactor;
+    const hsv = RGBtoHSV([r, g, b]);
+    hsv[1] *= settings.saturationFactor;
+    const rgb = HSVtoRGB(hsv);
+    chunkR[ci] = Math.max(0, Math.min(255, rgb[0]));
+    chunkG[ci] = Math.max(0, Math.min(255, rgb[1]));
+    chunkB_[ci] = Math.max(0, Math.min(255, rgb[2]));
+  }
+
+  const chunkL = new Float64Array(64);
+  const chunkA = new Float64Array(64);
+  const chunkBv = new Float64Array(64);
+  for (let p = 0; p < 64; p++) {
+    const lab = sRGBtoLab(chunkR[p], chunkG[p], chunkB_[p]);
+    chunkL[p] = lab.L;
+    chunkA[p] = lab.a;
+    chunkBv[p] = lab.b;
+  }
+
+  const weights = new Float64Array(64);
+  const alpha = settings.saliencyAlpha;
+  if (alpha > 0) {
+    let meanL = 0;
+    let meanA2 = 0;
+    let meanB2 = 0;
+    for (let p = 0; p < 64; p++) {
+      meanL += chunkL[p];
+      meanA2 += chunkA[p];
+      meanB2 += chunkBv[p];
+    }
+    meanL /= 64;
+    meanA2 /= 64;
+    meanB2 /= 64;
+
+    let maxDev = 0;
+    for (let p = 0; p < 64; p++) {
+      const dL = chunkL[p] - meanL;
+      const da = chunkA[p] - meanA2;
+      const db = chunkBv[p] - meanB2;
+      const dev = Math.sqrt(dL * dL + da * da + db * db);
+      weights[p] = dev;
+      if (dev > maxDev) maxDev = dev;
+    }
+
+    if (maxDev > 0) {
+      for (let p = 0; p < 64; p++) {
+        weights[p] = 1.0 + alpha * (weights[p] / maxDev);
+      }
+    } else {
+      weights.fill(1.0);
+    }
+  } else {
+    weights.fill(1.0);
+  }
+
+  let srcAvgL = 0;
+  for (let p = 0; p < 64; p++) srcAvgL += chunkL[p];
+  srcAvgL /= 64;
+
+  return { chunkL, chunkA, chunkBv, weights, srcAvgL };
+}
+
 function findOptimalPetscii(
   mode: 'standard' | 'ecm',
   srcData: Uint8ClampedArray,
@@ -348,78 +487,7 @@ function findOptimalPetscii(
     currRow.fill(-1);
 
     for (let cx = 0; cx < 40; cx++) {
-      // Read 64 source pixels for this 8×8 cell
-      const chunkR = new Float64Array(64);
-      const chunkG = new Float64Array(64);
-      const chunkB_ = new Float64Array(64);
-
-      for (let py = 0; py < 8; py++) {
-        for (let px = 0; px < 8; px++) {
-          const si = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 4;
-          const ci = py * 8 + px;
-          chunkR[ci] = srcData[si];
-          chunkG[ci] = srcData[si + 1];
-          chunkB_[ci] = srcData[si + 2];
-        }
-      }
-
-      // Apply brightness + saturation adjustment
-      for (let ci = 0; ci < 64; ci++) {
-        let r = chunkR[ci] * settings.brightnessFactor;
-        let g = chunkG[ci] * settings.brightnessFactor;
-        let b = chunkB_[ci] * settings.brightnessFactor;
-        const hsv = RGBtoHSV([r, g, b]);
-        hsv[1] *= settings.saturationFactor;
-        const rgb = HSVtoRGB(hsv);
-        chunkR[ci] = Math.max(0, Math.min(255, rgb[0]));
-        chunkG[ci] = Math.max(0, Math.min(255, rgb[1]));
-        chunkB_[ci] = Math.max(0, Math.min(255, rgb[2]));
-      }
-
-      // Convert to Lab
-      const chunkL = new Float64Array(64);
-      const chunkA = new Float64Array(64);
-      const chunkBv = new Float64Array(64);
-      for (let p = 0; p < 64; p++) {
-        const lab = sRGBtoLab(chunkR[p], chunkG[p], chunkB_[p]);
-        chunkL[p] = lab.L;
-        chunkA[p] = lab.a;
-        chunkBv[p] = lab.b;
-      }
-
-      // Per-pixel saliency weights
-      const weights = new Float64Array(64);
-      const alpha = settings.saliencyAlpha;
-      if (alpha > 0) {
-        let meanL = 0, meanA2 = 0, meanB2 = 0;
-        for (let p = 0; p < 64; p++) {
-          meanL += chunkL[p]; meanA2 += chunkA[p]; meanB2 += chunkBv[p];
-        }
-        meanL /= 64; meanA2 /= 64; meanB2 /= 64;
-
-        let maxDev = 0;
-        for (let p = 0; p < 64; p++) {
-          const dL = chunkL[p] - meanL, da = chunkA[p] - meanA2, db = chunkBv[p] - meanB2;
-          const dev = Math.sqrt(dL * dL + da * da + db * db);
-          weights[p] = dev;
-          if (dev > maxDev) maxDev = dev;
-        }
-
-        if (maxDev > 0) {
-          for (let p = 0; p < 64; p++) {
-            weights[p] = 1.0 + alpha * (weights[p] / maxDev);
-          }
-        } else {
-          for (let p = 0; p < 64; p++) weights[p] = 1.0;
-        }
-      } else {
-        for (let p = 0; p < 64; p++) weights[p] = 1.0;
-      }
-
-      // Source cell average luminance (Lab L, 0–100)
-      let srcAvgL = 0;
-      for (let p = 0; p < 64; p++) srcAvgL += chunkL[p];
-      srcAvgL /= 64;
+      const { chunkL, chunkA, chunkBv, weights, srcAvgL } = prepareCellData(srcData, cx, cy, settings);
 
       // Background candidates
       let bgCandidates: number[];
@@ -506,6 +574,292 @@ function findOptimalPetscii(
   return { screencodes, colors, bgIndices, totalError };
 }
 
+function findOptimalPetsciiMcm(
+  srcData: Uint8ClampedArray,
+  palette: PaletteColor[],
+  ref: boolean[][],
+  refMcm: Uint8Array[],
+  refMcmBpCount: Int32Array[],
+  mcmBg: number,
+  mcmMc1: number,
+  mcmMc2: number,
+  settings: ConverterSettings,
+  cellWeights: Float64Array | null,
+  disableRepeatPenalty: boolean = false
+): PetsciiResult {
+  const screencodes = new Array<number>(1000).fill(32);
+  const colors = new Array<number>(1000).fill(0);
+  const bgIndices: number[] = [];
+  let totalError = 0;
+
+  const pL = new Float64Array(16);
+  const pA = new Float64Array(16);
+  const pB = new Float64Array(16);
+  for (let i = 0; i < 16; i++) {
+    pL[i] = palette[i].L;
+    pA[i] = palette[i].a;
+    pB[i] = palette[i].B;
+  }
+
+  const refSetCount = new Int32Array(ref.length);
+  for (let ch = 0; ch < ref.length; ch++) {
+    let n = 0;
+    for (let p = 0; p < 64; p++) {
+      if (ref[ch][p]) n++;
+    }
+    refSetCount[ch] = n;
+  }
+
+  const REPEAT_PENALTY = 50.0;
+  const useRepeatPenalty = !disableRepeatPenalty;
+  const prevRow = new Int32Array(40).fill(-1);
+  const currRow = new Int32Array(40).fill(-1);
+
+  for (let cy = 0; cy < 25; cy++) {
+    prevRow.set(currRow);
+    currRow.fill(-1);
+
+    for (let cx = 0; cx < 40; cx++) {
+      const cellIdx = cy * 40 + cx;
+      if (disableRepeatPenalty && cellWeights && cellWeights[cellIdx] === 0) {
+        continue;
+      }
+
+      const { chunkL, chunkA, chunkBv, weights, srcAvgL } = prepareCellData(srcData, cx, cy, settings);
+
+      const mcmL = new Float64Array(32);
+      const mcmA = new Float64Array(32);
+      const mcmB = new Float64Array(32);
+      const mcmW = new Float64Array(32);
+      for (let py = 0; py < 8; py++) {
+        for (let mpx = 0; mpx < 4; mpx++) {
+          const p0 = py * 8 + mpx * 2;
+          const p1 = p0 + 1;
+          const mi = py * 4 + mpx;
+          mcmL[mi] = (chunkL[p0] + chunkL[p1]) * 0.5;
+          mcmA[mi] = (chunkA[p0] + chunkA[p1]) * 0.5;
+          mcmB[mi] = (chunkBv[p0] + chunkBv[p1]) * 0.5;
+          mcmW[mi] = (weights[p0] + weights[p1]) * 0.5;
+        }
+      }
+
+      let bestMcmErr = Infinity;
+      let bestMcmChar = 0;
+      let bestMcmFg = 0;
+
+      for (let ch = 0; ch < refMcm.length; ch++) {
+        const bits = refMcm[ch];
+        const counts = refMcmBpCount[ch];
+        let fixedErr = 0;
+
+        for (let p = 0; p < 32; p++) {
+          const bitPair = bits[p];
+          if (bitPair === 3) continue;
+          const col = bitPair === 0 ? mcmBg : bitPair === 1 ? mcmMc1 : mcmMc2;
+          const dL = mcmL[p] - pL[col];
+          const da = mcmA[p] - pA[col];
+          const db = mcmB[p] - pB[col];
+          fixedErr += mcmW[p] * (dL * dL + da * da + db * db);
+        }
+
+        if (2 * fixedErr >= bestMcmErr) continue;
+
+        for (let fg = 0; fg < 8; fg++) {
+          let fgErr = 0;
+          for (let p = 0; p < 32; p++) {
+            if (bits[p] !== 3) continue;
+            const dL = mcmL[p] - pL[fg];
+            const da = mcmA[p] - pA[fg];
+            const db = mcmB[p] - pB[fg];
+            fgErr += mcmW[p] * (dL * dL + da * da + db * db);
+          }
+
+          const colorErr = 2 * (fixedErr + fgErr);
+          const renderedAvgL =
+            (counts[0] * pL[mcmBg] +
+             counts[1] * pL[mcmMc1] +
+             counts[2] * pL[mcmMc2] +
+             counts[3] * pL[fg]) / 32;
+          const lumDiff = srcAvgL - renderedAvgL;
+          const lumPenalty = settings.lumMatchWeight * lumDiff * lumDiff;
+
+          let repeatPen = 0;
+          if (useRepeatPenalty) {
+            if (cx > 0 && ch === currRow[cx - 1]) repeatPen += REPEAT_PENALTY;
+            if (ch === prevRow[cx]) repeatPen += REPEAT_PENALTY;
+          }
+
+          const total = colorErr + lumPenalty + repeatPen;
+          if (total < bestMcmErr) {
+            bestMcmErr = total;
+            bestMcmChar = ch;
+            bestMcmFg = fg;
+          }
+        }
+      }
+
+      let bestHiresErr = Infinity;
+      let bestHiresChar = 0;
+      let bestHiresFg = 0;
+
+      for (let ch = 0; ch < ref.length; ch++) {
+        let bgErr = 0;
+        for (let p = 0; p < 64; p++) {
+          if (!ref[ch][p]) {
+            const dL = chunkL[p] - pL[mcmBg];
+            const da = chunkA[p] - pA[mcmBg];
+            const db = chunkBv[p] - pB[mcmBg];
+            bgErr += weights[p] * (dL * dL + da * da + db * db);
+          }
+        }
+
+        if (bgErr >= bestHiresErr) continue;
+
+        for (let fg = 0; fg < 8; fg++) {
+          if (fg === mcmBg) continue;
+          let fgErr = 0;
+          for (let p = 0; p < 64; p++) {
+            if (ref[ch][p]) {
+              const dL = chunkL[p] - pL[fg];
+              const da = chunkA[p] - pA[fg];
+              const db = chunkBv[p] - pB[fg];
+              fgErr += weights[p] * (dL * dL + da * da + db * db);
+            }
+          }
+
+          const nSet = refSetCount[ch];
+          const renderedAvgL = (nSet * pL[fg] + (64 - nSet) * pL[mcmBg]) / 64;
+          const lumDiff = srcAvgL - renderedAvgL;
+          const lumPenalty = settings.lumMatchWeight * lumDiff * lumDiff;
+
+          let repeatPen = 0;
+          if (useRepeatPenalty) {
+            if (cx > 0 && ch === currRow[cx - 1]) repeatPen += REPEAT_PENALTY;
+            if (ch === prevRow[cx]) repeatPen += REPEAT_PENALTY;
+          }
+
+          const total = bgErr + fgErr + lumPenalty + repeatPen;
+          if (total < bestHiresErr) {
+            bestHiresErr = total;
+            bestHiresChar = ch;
+            bestHiresFg = fg;
+          }
+        }
+      }
+
+      const useMcm = bestMcmErr < bestHiresErr;
+      const bestErr = useMcm ? bestMcmErr : bestHiresErr;
+      const bestChar = useMcm ? bestMcmChar : bestHiresChar;
+      const bestColorRam = useMcm ? (bestMcmFg | 8) : bestHiresFg;
+
+      totalError += (cellWeights ? cellWeights[cellIdx] : 1) * bestErr;
+      currRow[cx] = bestChar;
+      screencodes[cellIdx] = bestChar;
+      colors[cellIdx] = bestColorRam;
+    }
+  }
+
+  return { screencodes, colors, bgIndices, totalError };
+}
+
+function buildMcmShortlist(colorCounts: number[], bestBg: number): number[] {
+  const sorted = colorCounts
+    .map((count, idx) => ({ count, idx }))
+    .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.idx - b.idx));
+
+  let shortlist = sorted.slice(0, 8).map(entry => entry.idx);
+  if (!shortlist.includes(bestBg)) {
+    if (shortlist.length >= 8) {
+      shortlist[7] = bestBg;
+    } else {
+      shortlist.push(bestBg);
+    }
+  }
+
+  shortlist = shortlist.filter((value, index) => shortlist.indexOf(value) === index);
+  for (let color = 0; color < 16 && shortlist.length < 3; color++) {
+    if (!shortlist.includes(color)) shortlist.push(color);
+  }
+
+  return shortlist;
+}
+
+function fallbackMcmGlobals(bestBg: number): { mcmBg: number; mcmMc1: number; mcmMc2: number } {
+  const extras = Array.from({ length: 16 }, (_, color) => color).filter(color => color !== bestBg);
+  return {
+    mcmBg: bestBg,
+    mcmMc1: extras[0] ?? 1,
+    mcmMc2: extras[1] ?? 2,
+  };
+}
+
+async function findOptimalMcmGlobalColors(
+  srcData: Uint8ClampedArray,
+  palette: PaletteColor[],
+  ref: boolean[][],
+  refMcm: Uint8Array[],
+  refMcmBpCount: Int32Array[],
+  colorCounts: number[],
+  bestBg: number,
+  settings: ConverterSettings,
+  cellWeights: Float64Array,
+  onProgress: ProgressCallback,
+  progressStart: number,
+  progressSpan: number
+): Promise<{ mcmBg: number; mcmMc1: number; mcmMc2: number }> {
+  const candidates = buildMcmShortlist(colorCounts, bestBg);
+  const triples: [number, number, number][] = [];
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = 0; j < candidates.length; j++) {
+      if (j === i) continue;
+      for (let k = 0; k < candidates.length; k++) {
+        if (k === i || k === j) continue;
+        triples.push([candidates[i], candidates[j], candidates[k]]);
+      }
+    }
+  }
+
+  if (triples.length === 0) {
+    return fallbackMcmGlobals(bestBg);
+  }
+
+  let best = triples[0];
+  let bestErr = Infinity;
+  for (let idx = 0; idx < triples.length; idx++) {
+    const triple = triples[idx];
+    const pct = progressStart + Math.round((idx / triples.length) * progressSpan);
+    onProgress(
+      'MCM globals',
+      `${idx + 1} of ${triples.length} (bg=${triple[0]}, mc1=${triple[1]}, mc2=${triple[2]})`,
+      pct
+    );
+    await yieldToUI();
+    const result = findOptimalPetsciiMcm(
+      srcData,
+      palette,
+      ref,
+      refMcm,
+      refMcmBpCount,
+      triple[0],
+      triple[1],
+      triple[2],
+      settings,
+      cellWeights,
+      true
+    );
+    if (result.totalError < bestErr) {
+      bestErr = result.totalError;
+      best = triple;
+    }
+  }
+
+  return {
+    mcmBg: best[0],
+    mcmMc1: best[1],
+    mcmMc2: best[2],
+  };
+}
+
 // --- Preview Rendering ---
 
 function renderPreview(
@@ -543,6 +897,60 @@ function renderPreview(
   return imageData;
 }
 
+function renderMcmPreview(
+  result: PetsciiResult,
+  palette: PaletteColor[],
+  ref: boolean[][],
+  refMcm: Uint8Array[],
+  mcmBg: number,
+  mcmMc1: number,
+  mcmMc2: number
+): ImageData {
+  const imageData = new ImageData(320, 200);
+  const data = imageData.data;
+
+  for (let cy = 0; cy < 25; cy++) {
+    for (let cx = 0; cx < 40; cx++) {
+      const cellIdx = cy * 40 + cx;
+      const ch = result.screencodes[cellIdx];
+      const colorRam = result.colors[cellIdx];
+
+      if (mcmIsMulticolorCell(colorRam)) {
+        const fg = mcmForegroundColor(colorRam);
+        const bits = refMcm[ch];
+        for (let py = 0; py < 8; py++) {
+          for (let mpx = 0; mpx < 4; mpx++) {
+            const bitPair = bits[py * 4 + mpx];
+            const colorIdx = mcmResolveBitPairColor(bitPair, mcmBg, mcmMc1, mcmMc2, fg);
+            const x0 = mpx * 2;
+            for (let dx = 0; dx < 2; dx++) {
+              const di = ((cy * 8 + py) * 320 + (cx * 8 + x0 + dx)) * 4;
+              data[di] = palette[colorIdx].r;
+              data[di + 1] = palette[colorIdx].g;
+              data[di + 2] = palette[colorIdx].b;
+              data[di + 3] = 255;
+            }
+          }
+        }
+      } else {
+        for (let py = 0; py < 8; py++) {
+          for (let px = 0; px < 8; px++) {
+            const pi = py * 8 + px;
+            const colorIdx = ref[ch][pi] ? colorRam : mcmBg;
+            const di = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 4;
+            data[di] = palette[colorIdx].r;
+            data[di + 1] = palette[colorIdx].g;
+            data[di + 2] = palette[colorIdx].b;
+            data[di + 3] = 255;
+          }
+        }
+      }
+    }
+  }
+
+  return imageData;
+}
+
 // --- Top-level Orchestrator ---
 
 export type ProgressCallback = (stage: string, detail: string, pct: number) => void;
@@ -556,30 +964,36 @@ export async function convertImage(
   settings: ConverterSettings,
   fontBits: number[],
   onProgress: ProgressCallback
-): Promise<{
-  standard: ConversionResult;
-  ecm: ConversionResult;
-  previewStd: ImageData;
-  previewEcm: ImageData;
-}> {
+): Promise<ConversionOutputs> {
   const paletteData = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
   const palette = buildPaletteColors(paletteData.hex);
   const ref = buildRefChars(fontBits);
+  const { refMcm, refMcmBpCount } = buildRefMcmData(ref);
+  const renderStandard = settings.outputStandard;
+  const renderEcm = settings.outputEcm;
+  const renderMcm = settings.outputMcm;
 
   // Step 1: Resize image to 320×200
   onProgress('Resizing', 'Preparing canvas...', 0);
   const imageData = resizeToCanvas(img);
   const srcData = imageData.data;
 
-  // Step 2: Count palette colors (for ECM background selection)
-  onProgress('Mapping colors', 'Finding nearest C64 colors...', 5);
-  await yieldToUI();
-  const colorCounts = countPaletteColors(srcData, palette, settings);
+  const needsColorCounts = renderEcm || renderMcm;
+  const colorCounts = new Array(16).fill(0);
+  if (needsColorCounts) {
+    onProgress('Mapping colors', 'Finding nearest C64 colors...', 5);
+    await yieldToUI();
+    const counts = countPaletteColors(srcData, palette, settings);
+    for (let i = 0; i < counts.length; i++) colorCounts[i] = counts[i];
+  }
 
-  // Step 3: Compute cell complexity (for background search weighting)
-  onProgress('Analyzing', 'Computing cell complexity...', 10);
-  await yieldToUI();
-  const cellWeights = computeCellComplexity(srcData, settings);
+  const needsCellWeights = settings.manualBgColor === null || renderMcm;
+  let cellWeights: Float64Array | null = null;
+  if (needsCellWeights) {
+    onProgress('Analyzing', 'Computing cell complexity...', 10);
+    await yieldToUI();
+    cellWeights = computeCellComplexity(srcData, settings);
+  }
 
   // Step 4: Find optimal background color
   let bestBg: number;
@@ -603,61 +1017,125 @@ export async function convertImage(
   }
 
   // Step 5: Select ECM backgrounds (top 4 by frequency)
-  const sorted = colorCounts
-    .map((count, idx) => ({ count, idx }))
-    .sort((a, b) => b.count - a.count);
-  const ecmBgs = sorted.slice(0, 4).map(s => s.idx);
-  // Ensure brute-force winner is included
-  if (!ecmBgs.includes(bestBg)) {
-    ecmBgs[3] = bestBg;
+  let ecmBgs: number[] = [];
+  if (renderEcm) {
+    const sorted = colorCounts
+      .map((count, idx) => ({ count, idx }))
+      .sort((a, b) => b.count - a.count);
+    ecmBgs = sorted.slice(0, 4).map(s => s.idx);
+    if (!ecmBgs.includes(bestBg)) {
+      ecmBgs[3] = bestBg;
+    }
+    const winnerIdx = ecmBgs.indexOf(bestBg);
+    if (winnerIdx > 0) {
+      ecmBgs.splice(winnerIdx, 1);
+      ecmBgs.unshift(bestBg);
+    }
   }
-  // Move winner to position 0
-  const winnerIdx = ecmBgs.indexOf(bestBg);
-  if (winnerIdx > 0) {
-    ecmBgs.splice(winnerIdx, 1);
-    ecmBgs.unshift(bestBg);
+
+  // Step 6: Find MCM globals (bg, mc1, mc2)
+  let mcmBg: number | undefined;
+  let mcmMc1: number | undefined;
+  let mcmMc2: number | undefined;
+  if (renderMcm) {
+    const globals = await findOptimalMcmGlobalColors(
+      srcData,
+      palette,
+      ref,
+      refMcm,
+      refMcmBpCount,
+      colorCounts,
+      bestBg,
+      settings,
+      cellWeights!,
+      onProgress,
+      40,
+      20
+    );
+    mcmBg = globals.mcmBg;
+    mcmMc1 = globals.mcmMc1;
+    mcmMc2 = globals.mcmMc2;
   }
 
-  // Step 6: Standard conversion (256 chars, single bg)
-  onProgress('Converting', 'Standard mode (256 chars)...', 45);
-  await yieldToUI();
-  const stdResult = findOptimalPetscii(
-    'standard', srcData, palette, ref, bestBg, [], settings, null
-  );
+  let stdResult: PetsciiResult | undefined;
+  let ecmResult: PetsciiResult | undefined;
+  let mcmResult: PetsciiResult | undefined;
 
-  // Step 7: ECM conversion (64 chars, 4 bg colors)
-  onProgress('Converting', 'ECM mode (64 chars, 4 backgrounds)...', 70);
-  await yieldToUI();
-  const ecmResult = findOptimalPetscii(
-    'ecm', srcData, palette, ref, undefined, ecmBgs, settings, null
-  );
+  if (renderStandard) {
+    onProgress('Converting', 'Standard mode (256 chars)...', 60);
+    await yieldToUI();
+    stdResult = findOptimalPetscii(
+      'standard', srcData, palette, ref, bestBg, [], settings, null
+    );
+  }
 
-  // Step 8: Render previews
-  onProgress('Rendering', 'Generating previews...', 90);
-  await yieldToUI();
-  const previewStd = renderPreview(stdResult, palette, ref, bestBg, [], 'standard');
-  const previewEcm = renderPreview(ecmResult, palette, ref, bestBg, ecmBgs, 'ecm');
+  if (renderEcm) {
+    onProgress('Converting', 'ECM mode (64 chars, 4 backgrounds)...', 74);
+    await yieldToUI();
+    ecmResult = findOptimalPetscii(
+      'ecm', srcData, palette, ref, undefined, ecmBgs, settings, null
+    );
+  }
 
-  onProgress('Done', '', 100);
+  if (renderMcm) {
+    onProgress('Converting', 'MCM mode (mixed hires/multicolor)...', 86);
+    await yieldToUI();
+    mcmResult = findOptimalPetsciiMcm(
+      srcData,
+      palette,
+      ref,
+      refMcm,
+      refMcmBpCount,
+      mcmBg!,
+      mcmMc1!,
+      mcmMc2!,
+      settings,
+      null
+    );
+  }
 
-  return {
-    standard: {
+  const outputs: ConversionOutputs = {};
+  if (stdResult || ecmResult || mcmResult) {
+    onProgress('Rendering', 'Generating previews...', 94);
+    await yieldToUI();
+  }
+  if (stdResult) {
+    outputs.standard = {
       screencodes: stdResult.screencodes,
       colors: stdResult.colors,
       backgroundColor: bestBg,
       ecmBgColors: [],
       bgIndices: [],
+      mcmSharedColors: [],
       mode: 'standard',
-    },
-    ecm: {
+    };
+    outputs.previewStd = renderPreview(stdResult, palette, ref, bestBg, [], 'standard');
+  }
+  if (ecmResult) {
+    outputs.ecm = {
       screencodes: ecmResult.screencodes,
       colors: ecmResult.colors,
       backgroundColor: ecmBgs[0],
       ecmBgColors: ecmBgs,
       bgIndices: ecmResult.bgIndices,
+      mcmSharedColors: [],
       mode: 'ecm',
-    },
-    previewStd,
-    previewEcm,
-  };
+    };
+    outputs.previewEcm = renderPreview(ecmResult, palette, ref, bestBg, ecmBgs, 'ecm');
+  }
+  if (mcmResult && mcmBg !== undefined && mcmMc1 !== undefined && mcmMc2 !== undefined) {
+    outputs.mcm = {
+      screencodes: mcmResult.screencodes,
+      colors: mcmResult.colors,
+      backgroundColor: mcmBg,
+      ecmBgColors: [],
+      bgIndices: [],
+      mcmSharedColors: [mcmMc1, mcmMc2],
+      mode: 'mcm',
+    };
+    outputs.previewMcm = renderMcmPreview(mcmResult, palette, ref, refMcm, mcmBg, mcmMc1, mcmMc2);
+  }
+
+  onProgress('Done', '', 100);
+  return outputs;
 }

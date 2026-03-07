@@ -16,7 +16,7 @@ Petsciishop is our attempt to take the best ideas from across the C64 community,
 ## Features
 
 - **Runs in the browser** — no Electron, no server, just open the URL and start creating
-- **State-of-the-art image-to-PETSCII converter** — CIE Lab perceptual color matching, saliency-weighted character optimization, multiple C64 palettes. Supports Standard and ECM modes with live previews
+- **State-of-the-art image-to-PETSCII converter** — CIE Lab perceptual color matching, saliency-weighted character optimization, multiple C64 palettes. Supports Standard, ECM, and MCM modes with live previews
 - **Inspector tool** — hover over any cell to read its character and color; click to pick it up as your active drawing settings
 - **Per-screen palette support** — 9 industry-standard C64 palettes (Colodore, Pepto PAL/NTSC, VICE, and more), assignable per screen
 - **ECM (Extended Color Mode)** — full support with 2×2 background grid in the character picker

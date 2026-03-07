@@ -284,8 +284,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
   const author = framebuf.metadata?.author?.trim();
   const date = framebuf.metadata?.date?.trim();
   const description = framebuf.metadata?.description?.trim();
-  const detailsLine = [author, date ? formatDate(date) : undefined].filter(Boolean).join(' · ');
-  const infoText = description || 'PETSCII art is old-school 8-bit graphics from the Commodore 64: 40x25 characters, 16 colors, drawn with characters rather than freehand pixels.';
+  const formattedDate = date ? formatDate(date) : undefined;
   // In fullscreen, compute canvas size to fill viewport while preserving aspect ratio
   const stageStyle = useMemo<React.CSSProperties | undefined>(() => {
     if (!isFullscreen) return undefined;
@@ -304,11 +303,20 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
 
   return (
     <div ref={rootRef} className={`${s.page} ${isLandscape ? s.landscape : ''} ${isFullscreen ? s.fullscreen : ''}`}>
-      <img src={`${import.meta.env.BASE_URL}assets/petsciishop_logo.png`} alt="Petsciishop" className={s.logo} />
-      <div className={s.header}>
-        <h1 className={s.title}>{screenName}</h1>
-        <p className={s.subtitle}>Read-only mobile preview. Open on desktop for the full editor.</p>
-      </div>
+      <header className={s.headerBand}>
+        <div className={s.headerInner}>
+          <a
+            className={s.logoLink}
+            href="https://github.com/rcoenen/Petsciishop"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open Petsciishop on GitHub"
+          >
+            <img src={`${import.meta.env.BASE_URL}assets/petsciishop_logo.png`} alt="Petsciishop" className={s.logo} />
+          </a>
+          <p className={s.subtitle}>Mobile preview only. Desktop opens the full editor.</p>
+        </div>
+      </header>
       <div className={s.controls}>
         <div className={s.paletteRow}>
           <span className={s.controlsLabel}>Palette</span>
@@ -350,12 +358,51 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
           )}
         </div>
       </div>
-      <div className={s.meta}>
+      <div className={s.infoBlock}>
         <div className={s.metaPrimary}>40x25 · {mode}</div>
-        {detailsLine && <div className={s.metaSecondary}>{detailsLine}</div>}
+        <div className={s.fieldGroup}>
+          <div className={s.fieldLine}>
+            <span className={s.fieldLabel}>Name:</span>{' '}
+            <span className={s.fieldValue}>{screenName}</span>
+          </div>
+        </div>
+        {author && (
+          <div className={s.fieldGroup}>
+            <div className={s.fieldLine}>
+              <span className={s.fieldLabel}>Author:</span>{' '}
+              <span className={s.fieldValue}>{author}</span>
+            </div>
+          </div>
+        )}
+        {formattedDate && (
+          <div className={s.fieldGroup}>
+            <div className={s.fieldLine}>
+              <span className={s.fieldLabel}>Date:</span>{' '}
+              <span className={s.fieldValue}>{formattedDate}</span>
+            </div>
+          </div>
+        )}
+        {description && (
+          <div className={s.fieldGroup}>
+            <div className={s.fieldLine}>
+              <span className={s.fieldLabel}>Description:</span>{' '}
+              <span className={s.fieldValue}>{renderTextWithLinks(description)}</span>
+            </div>
+          </div>
+        )}
       </div>
-      <p className={s.about}>{renderTextWithLinks(infoText)}</p>
-      <a className={s.ghLink} href="https://github.com/rcoenen/Petsciishop" target="_blank" rel="noopener noreferrer">github.com/rcoenen/Petsciishop</a>
+      <footer className={s.footer}>
+        <div className={s.footerInner}>
+          <a
+            className={s.footerLink}
+            href="https://github.com/rcoenen/Petsciishop"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            github.com/rcoenen/Petsciishop
+          </a>
+        </div>
+      </footer>
     </div>
   );
 }

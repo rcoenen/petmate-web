@@ -7,6 +7,7 @@ import * as ReduxRoot from '../redux/root';
 import { getROMFontBits } from '../redux/selectors';
 import {
   convertImage,
+  ConverterFontBits,
   ConversionOutputs,
   ConversionResult,
   ConverterSettings,
@@ -18,10 +19,7 @@ import styles from './ImageConverterModal.module.css';
 
 const STORAGE_KEY = 'petsciishop-image-converter-settings';
 
-function ensureAtLeastOneOutput(settings: ConverterSettings): ConverterSettings {
-  if (settings.outputStandard || settings.outputEcm || settings.outputMcm) {
-    return settings;
-  }
+function normalizeOutputModes(settings: ConverterSettings): ConverterSettings {
   return { ...settings, outputStandard: true };
 }
 
@@ -34,21 +32,28 @@ function resetOutputModes(settings: ConverterSettings): ConverterSettings {
   };
 }
 
+function getCharsetIndicator(charset: ConversionResult['charset']): { sample: string; label: string } {
+  if (charset === 'lower') {
+    return { sample: 'abc', label: 'Lowercase charset selected' };
+  }
+  return { sample: 'ABC', label: 'Uppercase charset selected' };
+}
+
 function loadSettings(): ConverterSettings {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      return resetOutputModes(ensureAtLeastOneOutput({ ...CONVERTER_DEFAULTS, ...JSON.parse(saved) }));
+      return normalizeOutputModes(resetOutputModes({ ...CONVERTER_DEFAULTS, ...JSON.parse(saved) }));
     }
   } catch { /* ignore */ }
-  return resetOutputModes(ensureAtLeastOneOutput({ ...CONVERTER_DEFAULTS }));
+  return normalizeOutputModes(resetOutputModes({ ...CONVERTER_DEFAULTS }));
 }
 
 function saveSettings(settings: ConverterSettings) {
   try {
-    localStorage.setItem(
+      localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(resetOutputModes(ensureAtLeastOneOutput(settings)))
+      JSON.stringify(normalizeOutputModes(resetOutputModes(settings)))
     );
   } catch { /* ignore */ }
 }
@@ -77,7 +82,7 @@ function resultToFramebuf(result: ConversionResult): Framebuf {
     height: 25,
     backgroundColor: result.backgroundColor,
     borderColor: result.backgroundColor,
-    charset: 'upper',
+    charset: result.charset,
   };
   if (isEcm) {
     return {
@@ -102,6 +107,7 @@ function resultToFramebuf(result: ConversionResult): Framebuf {
 type ConverterModeKey = 'outputStandard' | 'outputEcm' | 'outputMcm';
 type PreviewMode = 'standard' | 'ecm' | 'mcm';
 type PreviewSignatures = Partial<Record<PreviewMode, string>>;
+const PREVIEW_MODE_ORDER: PreviewMode[] = ['standard', 'ecm', 'mcm'];
 
 function trimResultsForSettings(
   results: ConversionOutputs | null,
@@ -158,15 +164,95 @@ function buildPreviewSignatures(
   };
 }
 
+function buildDirtyModes(
+  settings: ConverterSettings,
+  results: ConversionOutputs | null,
+  resultSignatures: PreviewSignatures,
+  sourceVersion: number
+): PreviewMode[] {
+  const currentSignatures = buildPreviewSignatures(settings, sourceVersion);
+
+  return PREVIEW_MODE_ORDER.filter(mode => {
+    if (mode === 'ecm' && !settings.outputEcm) return false;
+    if (mode === 'mcm' && !settings.outputMcm) return false;
+
+    if (mode === 'standard') {
+      return !results?.standard || resultSignatures.standard !== currentSignatures.standard;
+    }
+    if (mode === 'ecm') {
+      return !results?.ecm || resultSignatures.ecm !== currentSignatures.ecm;
+    }
+    return !results?.mcm || resultSignatures.mcm !== currentSignatures.mcm;
+  });
+}
+
+function buildModeSettings(
+  settings: ConverterSettings,
+  mode: PreviewMode
+): ConverterSettings {
+  return {
+    ...settings,
+    outputStandard: mode === 'standard',
+    outputEcm: mode === 'ecm',
+    outputMcm: mode === 'mcm',
+  };
+}
+
+function mergeModeOutput(
+  previous: ConversionOutputs | null,
+  output: ConversionOutputs,
+  mode: PreviewMode
+): ConversionOutputs {
+  const next: ConversionOutputs = previous ? { ...previous } : {};
+
+  if (mode === 'standard' && output.standard && output.previewStd) {
+    next.standard = output.standard;
+    next.previewStd = output.previewStd;
+  }
+  if (mode === 'ecm' && output.ecm && output.previewEcm) {
+    next.ecm = output.ecm;
+    next.previewEcm = output.previewEcm;
+  }
+  if (mode === 'mcm' && output.mcm && output.previewMcm) {
+    next.mcm = output.mcm;
+    next.previewMcm = output.previewMcm;
+  }
+
+  return next;
+}
+
+function updateModeSignature(
+  previous: PreviewSignatures,
+  mode: PreviewMode,
+  settings: ConverterSettings,
+  sourceVersion: number
+): PreviewSignatures {
+  return {
+    ...previous,
+    [mode]: buildPreviewSignature(mode, settings, sourceVersion),
+  };
+}
+
 function getPendingPreviewState(
   mode: PreviewMode,
   converting: boolean,
+  activeRenderMode: PreviewMode | null,
   progress: { stage: string; detail: string; pct: number }
 ): { label: string; detail: string; pct: number } {
+  const modeName = mode === 'standard' ? 'Standard' : mode === 'ecm' ? 'ECM' : 'MCM';
+
   if (!converting) {
     return {
       label: 'Queued...',
       detail: 'Waiting to start conversion.',
+      pct: 0,
+    };
+  }
+
+  if (activeRenderMode !== mode) {
+    return {
+      label: 'Queued...',
+      detail: 'Waiting for earlier outputs to finish.',
       pct: 0,
     };
   }
@@ -199,12 +285,19 @@ function getPendingPreviewState(
     }
   }
 
-  const modeName = mode === 'standard' ? 'Standard' : mode === 'ecm' ? 'ECM' : 'MCM';
   return {
     label: `Preparing ${modeName}...`,
     detail: progress.detail || `${progress.stage}...`,
     pct: progress.pct,
   };
+}
+
+function isPreviewOverlayActive(
+  mode: PreviewMode,
+  converting: boolean,
+  activeRenderMode: PreviewMode | null
+): boolean {
+  return converting && activeRenderMode === mode;
 }
 
 export default function ImageConverterModal() {
@@ -216,6 +309,7 @@ export default function ImageConverterModal() {
   const [fileName, setFileName] = useState<string>('');
   const [sourceVersion, setSourceVersion] = useState(0);
   const [converting, setConverting] = useState(false);
+  const [activeRenderMode, setActiveRenderMode] = useState<PreviewMode | null>(null);
   const [progress, setProgress] = useState({ stage: '', detail: '', pct: 0 });
   const [results, setResults] = useState<ConversionOutputs | null>(null);
   const [resultSignatures, setResultSignatures] = useState<PreviewSignatures>({});
@@ -226,13 +320,15 @@ export default function ImageConverterModal() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const convertTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversionIdRef = useRef(0);
-  const fontBitsRef = useRef<number[]>([]);
+  const fontBitsRef = useRef<ConverterFontBits | null>(null);
 
   // Load font bits once
   useEffect(() => {
     try {
-      const font = getROMFontBits('upper');
-      fontBitsRef.current = font.bits;
+      fontBitsRef.current = {
+        upper: getROMFontBits('upper').bits,
+        lower: getROMFontBits('lower').bits,
+      };
     } catch { /* assets not loaded yet */ }
   }, []);
 
@@ -251,6 +347,7 @@ export default function ImageConverterModal() {
     setResults(null);
     setResultSignatures({});
     setProgress({ stage: '', detail: '', pct: 0 });
+    setActiveRenderMode(null);
     setConverting(false);
     setSettings(prev => resetOutputModes(prev));
   }, []);
@@ -263,18 +360,21 @@ export default function ImageConverterModal() {
 
   // Auto-convert when image or settings change
   useEffect(() => {
-    if (!image || !show) return;
+    if (!image || !show || converting) return;
+
+    const dirtyModes = buildDirtyModes(settings, results, resultSignatures, sourceVersion);
+    if (dirtyModes.length === 0) return;
 
     if (convertTimeoutRef.current) clearTimeout(convertTimeoutRef.current);
 
     convertTimeoutRef.current = setTimeout(() => {
-      doConversion(image, settings, sourceVersion);
+      doConversion(image, settings, sourceVersion, dirtyModes, results, resultSignatures);
     }, 300);
 
     return () => {
       if (convertTimeoutRef.current) clearTimeout(convertTimeoutRef.current);
     };
-  }, [image, settings, show, sourceVersion]);
+  }, [image, settings, show, sourceVersion, converting]);
 
   // Draw previews when results change
   useEffect(() => {
@@ -290,34 +390,64 @@ export default function ImageConverterModal() {
     }
   }, [results]);
 
-  const doConversion = useCallback(async (img: HTMLImageElement, s: ConverterSettings, sourceVersionValue: number) => {
-    if (fontBitsRef.current.length === 0) {
+  const doConversion = useCallback(async (
+    img: HTMLImageElement,
+    s: ConverterSettings,
+    sourceVersionValue: number,
+    queuedModes: PreviewMode[],
+    initialResults: ConversionOutputs | null,
+    initialSignatures: PreviewSignatures
+  ) => {
+    if (!fontBitsRef.current) {
       try {
-        fontBitsRef.current = getROMFontBits('upper').bits;
+        fontBitsRef.current = {
+          upper: getROMFontBits('upper').bits,
+          lower: getROMFontBits('lower').bits,
+        };
       } catch { return; }
     }
     const conversionId = ++conversionIdRef.current;
     setConverting(true);
+    let nextResults = trimResultsForSettings(initialResults, s);
+    let nextSignatures = trimSignaturesForSettings(initialSignatures, s);
     try {
-      const output = await convertImage(img, s, fontBitsRef.current, (stage, detail, pct) => {
+      for (const mode of queuedModes) {
         if (conversionId !== conversionIdRef.current) {
           return;
         }
-        setProgress({ stage, detail, pct });
-      });
-      if (conversionId !== conversionIdRef.current) {
-        return;
+
+        setActiveRenderMode(mode);
+        setProgress({ stage: '', detail: '', pct: 0 });
+
+        const output = await convertImage(
+          img,
+          buildModeSettings(s, mode),
+          fontBitsRef.current,
+          (stage, detail, pct) => {
+            if (conversionId !== conversionIdRef.current) {
+              return;
+            }
+            setProgress({ stage, detail, pct });
+          }
+        );
+        if (conversionId !== conversionIdRef.current) {
+          return;
+        }
+
+        nextResults = mergeModeOutput(nextResults, output, mode);
+        nextSignatures = updateModeSignature(nextSignatures, mode, s, sourceVersionValue);
+        setResults(nextResults);
+        setResultSignatures(nextSignatures);
+
+        // Let React commit the updated preview before the next output starts.
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
-      setResults(output);
-      setResultSignatures({
-        standard: output.standard ? buildPreviewSignature('standard', s, sourceVersionValue) : undefined,
-        ecm: output.ecm ? buildPreviewSignature('ecm', s, sourceVersionValue) : undefined,
-        mcm: output.mcm ? buildPreviewSignature('mcm', s, sourceVersionValue) : undefined,
-      });
     } catch (err) {
       console.error('Conversion failed:', err);
     } finally {
       if (conversionId === conversionIdRef.current) {
+        setActiveRenderMode(null);
+        setProgress({ stage: '', detail: '', pct: 0 });
         setConverting(false);
       }
     }
@@ -338,23 +468,26 @@ export default function ImageConverterModal() {
   }, []);
 
   const handleFileSelect = useCallback(() => {
+    if (converting) return;
     fileInputRef.current?.click();
-  }, []);
+  }, [converting]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (converting) return;
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith('image/')) return;
     loadImageFile(file);
-  }, [loadImageFile]);
+  }, [converting, loadImageFile]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (converting) return;
     const file = e.dataTransfer.files[0];
     if (file && /^image\/(jpeg|png|gif|webp)/.test(file.type)) {
       loadImageFile(file);
     }
-  }, [loadImageFile]);
+  }, [converting, loadImageFile]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -370,11 +503,11 @@ export default function ImageConverterModal() {
   }, []);
 
   const updateOutputMode = useCallback((key: ConverterModeKey, value: boolean) => {
+    if (key === 'outputStandard') {
+      return;
+    }
     setSettings(prev => {
-      const next = { ...prev, [key]: value } as ConverterSettings;
-      if (!next.outputStandard && !next.outputEcm && !next.outputMcm) {
-        return prev;
-      }
+      const next = normalizeOutputModes({ ...prev, [key]: value } as ConverterSettings);
       setResults(current => trimResultsForSettings(current, next));
       setResultSignatures(current => trimSignaturesForSettings(current, next));
       saveSettings(next);
@@ -423,15 +556,19 @@ export default function ImageConverterModal() {
 
   const activePalette = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
   const currentSignatures = buildPreviewSignatures(settings, sourceVersion);
-  const showStandardPreview = Boolean(image && settings.outputStandard);
+  const controlsDisabled = converting;
+  const showStandardPreview = Boolean(image);
   const showEcmPreview = Boolean(image && settings.outputEcm);
   const showMcmPreview = Boolean(image && settings.outputMcm);
   const standardStale = Boolean(results?.standard && resultSignatures.standard !== currentSignatures.standard);
   const ecmStale = Boolean(results?.ecm && resultSignatures.ecm !== currentSignatures.ecm);
   const mcmStale = Boolean(results?.mcm && resultSignatures.mcm !== currentSignatures.mcm);
-  const standardPending = getPendingPreviewState('standard', converting, progress);
-  const ecmPending = getPendingPreviewState('ecm', converting, progress);
-  const mcmPending = getPendingPreviewState('mcm', converting, progress);
+  const standardPending = getPendingPreviewState('standard', converting, activeRenderMode, progress);
+  const ecmPending = getPendingPreviewState('ecm', converting, activeRenderMode, progress);
+  const mcmPending = getPendingPreviewState('mcm', converting, activeRenderMode, progress);
+  const standardOverlayActive = standardStale && isPreviewOverlayActive('standard', converting, activeRenderMode);
+  const ecmOverlayActive = ecmStale && isPreviewOverlayActive('ecm', converting, activeRenderMode);
+  const mcmOverlayActive = mcmStale && isPreviewOverlayActive('mcm', converting, activeRenderMode);
 
   if (!show) return null;
 
@@ -444,7 +581,7 @@ export default function ImageConverterModal() {
           {/* File Selection / Reference Image */}
           <div className={styles.dropZoneWrapper}>
             <div
-              className={`${styles.dropZone} ${image ? styles.dropZoneHasImage : ''}`}
+              className={`${styles.dropZone} ${image ? styles.dropZoneHasImage : ''} ${controlsDisabled ? styles.dropZoneDisabled : ''}`}
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               onClick={handleFileSelect}
@@ -453,6 +590,7 @@ export default function ImageConverterModal() {
                 ref={fileInputRef}
                 type="file"
                 accept=".png,.jpg,.jpeg,.gif,.webp"
+                disabled={controlsDisabled}
                 onChange={handleFileChange}
                 style={{ display: 'none' }}
               />
@@ -467,7 +605,7 @@ export default function ImageConverterModal() {
           </div>
 
           {/* Settings */}
-          <fieldset className={styles.settings}>
+          <fieldset className={`${styles.settings} ${controlsDisabled ? styles.controlsDisabled : ''}`} disabled={controlsDisabled}>
             <legend>Conversion Settings</legend>
             <div className={styles.settingsRow}>
               <label>Preset:</label>
@@ -538,17 +676,19 @@ export default function ImageConverterModal() {
           </fieldset>
 
           <div className={styles.sideColumn}>
-            <fieldset className={styles.bgPanel}>
+            <fieldset className={`${styles.bgPanel} ${controlsDisabled ? styles.controlsDisabled : ''}`} disabled={controlsDisabled}>
               <legend>Background</legend>
               <div className={styles.bgSwatches}>
                 <button
                   className={`${styles.bgAuto} ${settings.manualBgColor === null ? styles.active : ''}`}
+                  disabled={controlsDisabled}
                   onClick={() => updateSetting('manualBgColor', null)}
                 >auto</button>
                 {activePalette.hex.map((hex, i) => (
                   <button
                     key={i}
                     className={`${styles.bgSwatch} ${settings.manualBgColor === i ? styles.active : ''}`}
+                    disabled={controlsDisabled}
                     style={{ backgroundColor: hex }}
                     onClick={() => updateSetting('manualBgColor', i)}
                     title={`Color ${i}`}
@@ -557,14 +697,15 @@ export default function ImageConverterModal() {
               </div>
             </fieldset>
 
-            <fieldset className={styles.outputPanel}>
+            <fieldset className={`${styles.outputPanel} ${controlsDisabled ? styles.controlsDisabled : ''}`} disabled={controlsDisabled}>
               <legend>PETSKII Output</legend>
               <div className={styles.outputSection}>
                 <label className={styles.modeOption}>
                   <input
                     type='checkbox'
-                    checked={settings.outputStandard}
-                    onChange={(e) => updateOutputMode('outputStandard', e.target.checked)}
+                    checked={true}
+                    disabled={true}
+                    onChange={() => undefined}
                   />
                   <span className={styles.modeText}>
                     <span className={styles.modeName}>Standard</span>
@@ -609,14 +750,14 @@ export default function ImageConverterModal() {
               <h4>Standard (256 chars)</h4>
               {results?.standard ? (
                 <>
-                  <div className={styles.previewSurface}>
+                  <div className={`${styles.previewSurface} ${standardStale ? styles.previewSurfaceStale : ''}`}>
                     <canvas
                       ref={stdCanvasRef}
                       width={320}
                       height={200}
                       className={styles.previewCanvas}
                     />
-                    {standardStale && (
+                    {standardOverlayActive && (
                       <div className={styles.previewOverlay}>
                         <div className={styles.previewPlaceholderInner}>
                           <div className={styles.previewPlaceholderLabel}>{standardPending.label}</div>
@@ -628,9 +769,13 @@ export default function ImageConverterModal() {
                       </div>
                     )}
                   </div>
+                  <div className={styles.charsetNote}>
+                    <span className={styles.charsetSample}>{getCharsetIndicator(results.standard.charset).sample}</span>
+                    <span>{getCharsetIndicator(results.standard.charset).label}</span>
+                  </div>
                   <button
                     className={styles.importBtn}
-                    disabled={standardStale}
+                    disabled={standardStale || converting}
                     onClick={() => handleImport(results.standard)}
                   >Import Standard</button>
                 </>
@@ -654,14 +799,14 @@ export default function ImageConverterModal() {
               <h4>ECM (64 chars, 4 bg)</h4>
               {results?.ecm ? (
                 <>
-                  <div className={styles.previewSurface}>
+                  <div className={`${styles.previewSurface} ${ecmStale ? styles.previewSurfaceStale : ''}`}>
                     <canvas
                       ref={ecmCanvasRef}
                       width={320}
                       height={200}
                       className={styles.previewCanvas}
                     />
-                    {ecmStale && (
+                    {ecmOverlayActive && (
                       <div className={styles.previewOverlay}>
                         <div className={styles.previewPlaceholderInner}>
                           <div className={styles.previewPlaceholderLabel}>{ecmPending.label}</div>
@@ -673,9 +818,13 @@ export default function ImageConverterModal() {
                       </div>
                     )}
                   </div>
+                  <div className={styles.charsetNote}>
+                    <span className={styles.charsetSample}>{getCharsetIndicator(results.ecm.charset).sample}</span>
+                    <span>{getCharsetIndicator(results.ecm.charset).label}</span>
+                  </div>
                   <button
                     className={styles.importBtn}
-                    disabled={ecmStale}
+                    disabled={ecmStale || converting}
                     onClick={() => handleImport(results.ecm)}
                   >Import ECM</button>
                 </>
@@ -699,14 +848,14 @@ export default function ImageConverterModal() {
               <h4>MCM (mixed hires + multicolor)</h4>
               {results?.mcm ? (
                 <>
-                  <div className={styles.previewSurface}>
+                  <div className={`${styles.previewSurface} ${mcmStale ? styles.previewSurfaceStale : ''}`}>
                     <canvas
                       ref={mcmCanvasRef}
                       width={320}
                       height={200}
                       className={styles.previewCanvas}
                     />
-                    {mcmStale && (
+                    {mcmOverlayActive && (
                       <div className={styles.previewOverlay}>
                         <div className={styles.previewPlaceholderInner}>
                           <div className={styles.previewPlaceholderLabel}>{mcmPending.label}</div>
@@ -718,9 +867,13 @@ export default function ImageConverterModal() {
                       </div>
                     )}
                   </div>
+                  <div className={styles.charsetNote}>
+                    <span className={styles.charsetSample}>{getCharsetIndicator(results.mcm.charset).sample}</span>
+                    <span>{getCharsetIndicator(results.mcm.charset).label}</span>
+                  </div>
                   <button
                     className={styles.importBtn}
-                    disabled={mcmStale}
+                    disabled={mcmStale || converting}
                     onClick={() => handleImport(results.mcm)}
                   >Import MCM</button>
                   <div className={styles.previewNote}>

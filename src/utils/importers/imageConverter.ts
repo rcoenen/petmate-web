@@ -153,6 +153,13 @@ export const CONVERTER_PRESETS = [
 
 // --- Results ---
 
+export type ConverterCharset = 'upper' | 'lower';
+
+export interface ConverterFontBits {
+  upper: number[];
+  lower: number[];
+}
+
 export interface ConversionResult {
   screencodes: number[];   // 1000 entries (40×25)
   colors: number[];        // 1000 entries
@@ -160,6 +167,7 @@ export interface ConversionResult {
   ecmBgColors: number[];   // ECM: 4 bg colors; Standard: empty
   bgIndices: number[];     // ECM: per-cell bg index; Standard: empty
   mcmSharedColors: number[]; // MCM: [mc1, mc2]; Standard/ECM: empty
+  charset: ConverterCharset;
   mode: 'standard' | 'ecm' | 'mcm';
 }
 
@@ -170,6 +178,26 @@ export interface ConversionOutputs {
   previewStd?: ImageData;
   previewEcm?: ImageData;
   previewMcm?: ImageData;
+}
+
+interface CharsetConversionContext {
+  ref: boolean[][];
+  refSetCount: Int32Array;
+  refMcm?: Uint8Array[];
+  refMcmBpCount?: Int32Array[];
+}
+
+interface ModeCandidate {
+  charset: ConverterCharset;
+  result: PetsciiResult;
+  conversion: ConversionResult;
+}
+
+interface CharsetConversionCandidates {
+  context: CharsetConversionContext;
+  standard?: ModeCandidate;
+  ecm?: ModeCandidate;
+  mcm?: ModeCandidate;
 }
 
 // --- Reference Characters from ROM font ---
@@ -216,6 +244,42 @@ function buildRefMcmData(ref: boolean[][]): McmReferenceData {
   }
 
   return { refMcm, refMcmBpCount };
+}
+
+function buildCharsetConversionContext(
+  fontBits: number[],
+  renderMcm: boolean
+): CharsetConversionContext {
+  const ref = buildRefChars(fontBits);
+  const refSetCount = buildRefSetCount(ref);
+
+  if (!renderMcm) {
+    return { ref, refSetCount };
+  }
+
+  const { refMcm, refMcmBpCount } = buildRefMcmData(ref);
+  return { ref, refSetCount, refMcm, refMcmBpCount };
+}
+
+function createScopedProgress(
+  onProgress: ProgressCallback,
+  prefix: string,
+  progressStart: number,
+  progressSpan: number
+): ProgressCallback {
+  return (stage, detail, pct) => {
+    const scopedPct = progressStart + Math.round((pct / 100) * progressSpan);
+    onProgress(stage, `${prefix}${detail}`.trim(), scopedPct);
+  };
+}
+
+function pickBetterCandidate(
+  first?: ModeCandidate,
+  second?: ModeCandidate
+): ModeCandidate | undefined {
+  if (!first) return second;
+  if (!second) return first;
+  return second.result.totalError < first.result.totalError ? second : first;
 }
 
 // --- Image Resize ---
@@ -966,6 +1030,171 @@ async function findOptimalMcmGlobalColors(
   };
 }
 
+interface SharedConversionInputs {
+  paletteLab: PaletteLabArrays;
+  colorCounts: number[];
+  settings: ConverterSettings;
+  preparedCells: PreparedCellData[];
+  renderStandard: boolean;
+  renderEcm: boolean;
+  renderMcm: boolean;
+  cellWeights: Float64Array | null;
+  rankedIndices: Int32Array | null;
+}
+
+async function convertForCharset(
+  charset: ConverterCharset,
+  context: CharsetConversionContext,
+  shared: SharedConversionInputs,
+  onProgress: ProgressCallback
+): Promise<CharsetConversionCandidates> {
+  const { paletteLab, colorCounts, settings, preparedCells, renderStandard, renderEcm, renderMcm, cellWeights, rankedIndices } = shared;
+  const { ref, refSetCount, refMcm, refMcmBpCount } = context;
+
+  let bestBg: number;
+  if (settings.manualBgColor !== null) {
+    bestBg = settings.manualBgColor;
+    onProgress('Background', `Using manual color ${bestBg}`, 15);
+  } else {
+    bestBg = 0;
+    let bestErr = Infinity;
+    for (let candidate = 0; candidate < 16; candidate++) {
+      onProgress('Background', `Testing ${candidate + 1} of 16...`, 15 + Math.round((candidate / 16) * 25));
+      await yieldToUI();
+      const result = findOptimalPetscii(
+        'standard', preparedCells, paletteLab, ref, refSetCount, candidate, [], settings, cellWeights, true
+      );
+      if (result.totalError < bestErr) {
+        bestErr = result.totalError;
+        bestBg = candidate;
+      }
+    }
+  }
+
+  let ecmBgs: number[] = [];
+  if (renderEcm) {
+    const sorted = colorCounts
+      .map((count, idx) => ({ count, idx }))
+      .sort((a, b) => b.count - a.count);
+    ecmBgs = sorted.slice(0, 4).map(s => s.idx);
+    if (!ecmBgs.includes(bestBg)) {
+      ecmBgs[3] = bestBg;
+    }
+    const winnerIdx = ecmBgs.indexOf(bestBg);
+    if (winnerIdx > 0) {
+      ecmBgs.splice(winnerIdx, 1);
+      ecmBgs.unshift(bestBg);
+    }
+  }
+
+  let mcmBg: number | undefined;
+  let mcmMc1: number | undefined;
+  let mcmMc2: number | undefined;
+  if (renderMcm && refMcm && refMcmBpCount && cellWeights && rankedIndices) {
+    const globals = await findOptimalMcmGlobalColors(
+      preparedCells,
+      paletteLab,
+      ref,
+      refSetCount,
+      refMcm,
+      refMcmBpCount,
+      colorCounts,
+      bestBg,
+      settings,
+      cellWeights,
+      rankedIndices,
+      onProgress,
+      40,
+      20
+    );
+    mcmBg = globals.mcmBg;
+    mcmMc1 = globals.mcmMc1;
+    mcmMc2 = globals.mcmMc2;
+  }
+
+  let standard: ModeCandidate | undefined;
+  let ecm: ModeCandidate | undefined;
+  let mcm: ModeCandidate | undefined;
+
+  if (renderStandard) {
+    onProgress('Converting', 'Standard mode (256 chars)...', 60);
+    await yieldToUI();
+    const result = findOptimalPetscii(
+      'standard', preparedCells, paletteLab, ref, refSetCount, bestBg, [], settings, null
+    );
+    standard = {
+      charset,
+      result,
+      conversion: {
+        screencodes: result.screencodes,
+        colors: result.colors,
+        backgroundColor: bestBg,
+        ecmBgColors: [],
+        bgIndices: [],
+        mcmSharedColors: [],
+        charset,
+        mode: 'standard',
+      },
+    };
+  }
+
+  if (renderEcm) {
+    onProgress('Converting', 'ECM mode (64 chars, 4 backgrounds)...', 74);
+    await yieldToUI();
+    const result = findOptimalPetscii(
+      'ecm', preparedCells, paletteLab, ref, refSetCount, undefined, ecmBgs, settings, null
+    );
+    ecm = {
+      charset,
+      result,
+      conversion: {
+        screencodes: result.screencodes,
+        colors: result.colors,
+        backgroundColor: ecmBgs[0],
+        ecmBgColors: ecmBgs,
+        bgIndices: result.bgIndices,
+        mcmSharedColors: [],
+        charset,
+        mode: 'ecm',
+      },
+    };
+  }
+
+  if (renderMcm && refMcm && refMcmBpCount && mcmBg !== undefined && mcmMc1 !== undefined && mcmMc2 !== undefined) {
+    onProgress('Converting', 'MCM mode (mixed hires/multicolor)...', 86);
+    await yieldToUI();
+    const result = findOptimalPetsciiMcm(
+      preparedCells,
+      paletteLab,
+      ref,
+      refSetCount,
+      refMcm,
+      refMcmBpCount,
+      mcmBg,
+      mcmMc1,
+      mcmMc2,
+      settings,
+      null
+    );
+    mcm = {
+      charset,
+      result,
+      conversion: {
+        screencodes: result.screencodes,
+        colors: result.colors,
+        backgroundColor: mcmBg,
+        ecmBgColors: [],
+        bgIndices: [],
+        mcmSharedColors: [mcmMc1, mcmMc2],
+        charset,
+        mode: 'mcm',
+      },
+    };
+  }
+
+  return { context, standard, ecm, mcm };
+}
+
 // --- Preview Rendering ---
 
 function renderPreview(
@@ -1068,20 +1297,15 @@ function yieldToUI(): Promise<void> {
 export async function convertImage(
   img: HTMLImageElement,
   settings: ConverterSettings,
-  fontBits: number[],
+  fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback
 ): Promise<ConversionOutputs> {
   const paletteData = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
   const palette = buildPaletteColors(paletteData.hex);
   const paletteLab = buildPaletteLabArrays(palette);
-  const ref = buildRefChars(fontBits);
-  const refSetCount = buildRefSetCount(ref);
   const renderStandard = settings.outputStandard;
   const renderEcm = settings.outputEcm;
   const renderMcm = settings.outputMcm;
-  const mcmReferenceData = renderMcm ? buildRefMcmData(ref) : null;
-  const refMcm = mcmReferenceData?.refMcm;
-  const refMcmBpCount = mcmReferenceData?.refMcmBpCount;
 
   // Step 1: Resize image to 320×200
   onProgress('Resizing', 'Preparing canvas...', 0);
@@ -1112,148 +1336,83 @@ export async function convertImage(
   await yieldToUI();
   const preparedCells = buildPreparedCells(srcData, settings, renderMcm);
 
-  // Step 4: Find optimal background color
-  let bestBg: number;
-  if (settings.manualBgColor !== null) {
-    bestBg = settings.manualBgColor;
-    onProgress('Background', `Using manual color ${bestBg}`, 15);
-  } else {
-    bestBg = 0;
-    let bestErr = Infinity;
-    for (let candidate = 0; candidate < 16; candidate++) {
-      onProgress('Background', `Testing ${candidate + 1} of 16...`, 15 + Math.round((candidate / 16) * 25));
-      await yieldToUI();
-      const result = findOptimalPetscii(
-        'standard', preparedCells, paletteLab, ref, refSetCount, candidate, [], settings, cellWeights, true
-      );
-      if (result.totalError < bestErr) {
-        bestErr = result.totalError;
-        bestBg = candidate;
-      }
-    }
-  }
+  const sharedInputs: SharedConversionInputs = {
+    paletteLab,
+    colorCounts,
+    settings,
+    preparedCells,
+    renderStandard,
+    renderEcm,
+    renderMcm,
+    cellWeights,
+    rankedIndices,
+  };
 
-  // Step 5: Select ECM backgrounds (top 4 by frequency)
-  let ecmBgs: number[] = [];
-  if (renderEcm) {
-    const sorted = colorCounts
-      .map((count, idx) => ({ count, idx }))
-      .sort((a, b) => b.count - a.count);
-    ecmBgs = sorted.slice(0, 4).map(s => s.idx);
-    if (!ecmBgs.includes(bestBg)) {
-      ecmBgs[3] = bestBg;
-    }
-    const winnerIdx = ecmBgs.indexOf(bestBg);
-    if (winnerIdx > 0) {
-      ecmBgs.splice(winnerIdx, 1);
-      ecmBgs.unshift(bestBg);
-    }
-  }
+  const upperContext = buildCharsetConversionContext(fontBitsByCharset.upper, renderMcm);
+  const lowerContext = buildCharsetConversionContext(fontBitsByCharset.lower, renderMcm);
 
-  // Step 6: Find MCM globals (bg, mc1, mc2)
-  let mcmBg: number | undefined;
-  let mcmMc1: number | undefined;
-  let mcmMc2: number | undefined;
-  if (renderMcm && refMcm && refMcmBpCount && cellWeights && rankedIndices) {
-    const globals = await findOptimalMcmGlobalColors(
-      preparedCells,
-      paletteLab,
-      ref,
-      refSetCount,
-      refMcm,
-      refMcmBpCount,
-      colorCounts,
-      bestBg,
-      settings,
-      cellWeights,
-      rankedIndices,
-      onProgress,
-      40,
-      20
-    );
-    mcmBg = globals.mcmBg;
-    mcmMc1 = globals.mcmMc1;
-    mcmMc2 = globals.mcmMc2;
-  }
+  const upperCandidates = await convertForCharset(
+    'upper',
+    upperContext,
+    sharedInputs,
+    createScopedProgress(onProgress, 'Upper ROM: ', 12, 40)
+  );
+  const lowerCandidates = await convertForCharset(
+    'lower',
+    lowerContext,
+    sharedInputs,
+    createScopedProgress(onProgress, 'Lower ROM: ', 52, 40)
+  );
 
-  let stdResult: PetsciiResult | undefined;
-  let ecmResult: PetsciiResult | undefined;
-  let mcmResult: PetsciiResult | undefined;
-
-  if (renderStandard) {
-    onProgress('Converting', 'Standard mode (256 chars)...', 60);
-    await yieldToUI();
-    stdResult = findOptimalPetscii(
-      'standard', preparedCells, paletteLab, ref, refSetCount, bestBg, [], settings, null
-    );
-  }
-
-  if (renderEcm) {
-    onProgress('Converting', 'ECM mode (64 chars, 4 backgrounds)...', 74);
-    await yieldToUI();
-    ecmResult = findOptimalPetscii(
-      'ecm', preparedCells, paletteLab, ref, refSetCount, undefined, ecmBgs, settings, null
-    );
-  }
-
-  if (renderMcm && refMcm && refMcmBpCount) {
-    onProgress('Converting', 'MCM mode (mixed hires/multicolor)...', 86);
-    await yieldToUI();
-    mcmResult = findOptimalPetsciiMcm(
-      preparedCells,
-      paletteLab,
-      ref,
-      refSetCount,
-      refMcm,
-      refMcmBpCount,
-      mcmBg!,
-      mcmMc1!,
-      mcmMc2!,
-      settings,
-      null
-    );
-  }
+  const bestStandard = pickBetterCandidate(upperCandidates.standard, lowerCandidates.standard);
+  const bestEcm = pickBetterCandidate(upperCandidates.ecm, lowerCandidates.ecm);
+  const bestMcm = pickBetterCandidate(upperCandidates.mcm, lowerCandidates.mcm);
+  const contextsByCharset: Record<ConverterCharset, CharsetConversionContext> = {
+    upper: upperCandidates.context,
+    lower: lowerCandidates.context,
+  };
 
   const outputs: ConversionOutputs = {};
-  if (stdResult || ecmResult || mcmResult) {
+  if (bestStandard || bestEcm || bestMcm) {
     onProgress('Rendering', 'Generating previews...', 94);
     await yieldToUI();
   }
-  if (stdResult) {
-    outputs.standard = {
-      screencodes: stdResult.screencodes,
-      colors: stdResult.colors,
-      backgroundColor: bestBg,
-      ecmBgColors: [],
-      bgIndices: [],
-      mcmSharedColors: [],
-      mode: 'standard',
-    };
-    outputs.previewStd = renderPreview(stdResult, palette, ref, bestBg, [], 'standard');
+  if (bestStandard) {
+    const context = contextsByCharset[bestStandard.charset];
+    outputs.standard = bestStandard.conversion;
+    outputs.previewStd = renderPreview(
+      bestStandard.result,
+      palette,
+      context.ref,
+      bestStandard.conversion.backgroundColor,
+      [],
+      'standard'
+    );
   }
-  if (ecmResult) {
-    outputs.ecm = {
-      screencodes: ecmResult.screencodes,
-      colors: ecmResult.colors,
-      backgroundColor: ecmBgs[0],
-      ecmBgColors: ecmBgs,
-      bgIndices: ecmResult.bgIndices,
-      mcmSharedColors: [],
-      mode: 'ecm',
-    };
-    outputs.previewEcm = renderPreview(ecmResult, palette, ref, bestBg, ecmBgs, 'ecm');
+  if (bestEcm) {
+    const context = contextsByCharset[bestEcm.charset];
+    outputs.ecm = bestEcm.conversion;
+    outputs.previewEcm = renderPreview(
+      bestEcm.result,
+      palette,
+      context.ref,
+      bestEcm.conversion.backgroundColor,
+      bestEcm.conversion.ecmBgColors,
+      'ecm'
+    );
   }
-  if (mcmResult && refMcm && mcmBg !== undefined && mcmMc1 !== undefined && mcmMc2 !== undefined) {
-    outputs.mcm = {
-      screencodes: mcmResult.screencodes,
-      colors: mcmResult.colors,
-      backgroundColor: mcmBg,
-      ecmBgColors: [],
-      bgIndices: [],
-      mcmSharedColors: [mcmMc1, mcmMc2],
-      mode: 'mcm',
-    };
-    outputs.previewMcm = renderMcmPreview(mcmResult, palette, ref, refMcm, mcmBg, mcmMc1, mcmMc2);
+  if (bestMcm) {
+    const context = contextsByCharset[bestMcm.charset];
+    outputs.mcm = bestMcm.conversion;
+    outputs.previewMcm = renderMcmPreview(
+      bestMcm.result,
+      palette,
+      context.ref,
+      context.refMcm!,
+      bestMcm.conversion.backgroundColor,
+      bestMcm.conversion.mcmSharedColors[0],
+      bestMcm.conversion.mcmSharedColors[1]
+    );
   }
 
   onProgress('Done', '', 100);

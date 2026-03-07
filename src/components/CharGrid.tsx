@@ -4,13 +4,14 @@ import { Rgb, Font, Pixel, Coord2 } from '../redux/types';
 import { ecmCharIndex, ecmBgSelector } from '../utils/ecm';
 import { mcmForegroundColor, mcmIsMulticolorCell, mcmResolveBitPairColor } from '../utils/mcm';
 
+const sharedCharsetCaches = new WeakMap<number[], WeakMap<Rgb[], CharsetCache>>();
+
 class CharsetCache {
   private images: ImageData[][] = Array(16);
   private fontBits: number[];
   private palette: Rgb[];
 
   constructor (
-    ctx: CanvasRenderingContext2D,
     fontBits: number[],
     colorPalette: Rgb[]
   ) {
@@ -26,7 +27,7 @@ class CharsetCache {
         const boffs = c*8;
 
         let dstIdx = 0
-        let img = ctx.createImageData(8, 8);
+        let img = new ImageData(8, 8);
         let bits = img.data
 
         for (let y = 0; y < 8; y++) {
@@ -104,6 +105,20 @@ class CharsetCache {
     }
     return img;
   }
+}
+
+function getSharedCharsetCache(fontBits: number[], colorPalette: Rgb[]) {
+  let paletteCaches = sharedCharsetCaches.get(fontBits);
+  if (!paletteCaches) {
+    paletteCaches = new WeakMap<Rgb[], CharsetCache>();
+    sharedCharsetCaches.set(fontBits, paletteCaches);
+  }
+  let cache = paletteCaches.get(colorPalette);
+  if (!cache) {
+    cache = new CharsetCache(fontBits, colorPalette);
+    paletteCaches.set(colorPalette, cache);
+  }
+  return cache;
 }
 
 interface CharGridProps {
@@ -209,7 +224,7 @@ export default class CharGrid extends Component<CharGridProps> {
     if (this.font === null ||
       this.props.font !== prevProps!.font ||
       this.props.colorPalette !== prevProps!.colorPalette) {
-      this.font = new CharsetCache(ctx, this.props.font.bits, this.props.colorPalette)
+      this.font = getSharedCharsetCache(this.props.font.bits, this.props.colorPalette)
       invalidate = true
     }
 

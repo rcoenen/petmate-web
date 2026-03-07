@@ -1,5 +1,5 @@
 
-import React, { PureComponent, useState, useCallback, CSSProperties } from 'react';
+import React, { PureComponent, useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, CSSProperties } from 'react';
 import { connect } from 'react-redux'
 import { bindActionCreators } from 'redux'
 import {
@@ -28,7 +28,8 @@ import * as screens from '../redux/screens'
 import * as ReduxRoot from '../redux/root'
 import * as selectors from '../redux/selectors'
 import * as screensSelectors from '../redux/screensSelectors'
-import { getEffectiveColorPalette } from '../redux/settingsSelectors'
+import { getEffectivePaletteId } from '../redux/settingsSelectors'
+import { getColorPaletteById } from '../utils/palette'
 
 import * as utils from '../utils'
 import * as fp from '../utils/fp'
@@ -76,7 +77,8 @@ interface FramebufTabProps {
   active: boolean;
   framebufId: number;
   framebuf: Framebuf;
-  colorPalette: Rgb[];
+  currentPaletteId: string;
+  paletteUpdateOrder: number;
   font: Font;
   showColorModeLabels: boolean;
 
@@ -89,7 +91,11 @@ interface FramebufTabProps {
   onScreenInfo: (framebufId: number) => void;
 };
 
-class FramebufTab extends PureComponent<FramebufTabProps> {
+interface FramebufTabViewProps extends Omit<FramebufTabProps, 'currentPaletteId' | 'paletteUpdateOrder'> {
+  colorPalette: Rgb[];
+}
+
+class FramebufTabView extends PureComponent<FramebufTabViewProps> {
   tabRef = React.createRef<HTMLDivElement>();
 
   handleSelect = () => {
@@ -232,6 +238,57 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
   }
 }
 
+function FramebufTab(props: FramebufTabProps) {
+  const [displayedPaletteId, setDisplayedPaletteId] = useState(props.currentPaletteId);
+  const timeoutRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (!props.active) {
+      return;
+    }
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setDisplayedPaletteId(props.currentPaletteId);
+  }, [props.active, props.currentPaletteId]);
+
+  useEffect(() => {
+    if (props.active || displayedPaletteId === props.currentPaletteId) {
+      return;
+    }
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = window.setTimeout(() => {
+      timeoutRef.current = null;
+      setDisplayedPaletteId(props.currentPaletteId);
+    }, THUMBNAIL_UPDATE_DELAY_MS * props.paletteUpdateOrder);
+
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, [displayedPaletteId, props.active, props.currentPaletteId, props.paletteUpdateOrder]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <FramebufTabView
+      {...props}
+      colorPalette={getColorPaletteById(displayedPaletteId)}
+    />
+  );
+}
+
 function SortableFramebufTab(props: FramebufTabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.framebufId,
@@ -365,7 +422,7 @@ interface FramebufferTabsDispatch {
 interface FramebufferTabsProps {
   screens: number[];
   activeScreen: number;
-  getColorPaletteByIndex: (idx: number) => Rgb[];
+  currentPaletteId: string;
   newScreenSize: { width: number, height: number };
   showColorModeLabels: boolean;
 
@@ -374,10 +431,23 @@ interface FramebufferTabsProps {
   setFramebufMetadata: (data: any, framebufIndex: number) => void;
 }
 
+const THUMBNAIL_UPDATE_DELAY_MS = 16;
+
+function orderDeferredThumbnailIds(screens: number[], activeScreen: number) {
+  return screens.filter((_id, index) => index !== activeScreen);
+}
+
 function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
+  const paletteUpdateOrder = useMemo(() => {
+    const orderedIds = orderDeferredThumbnailIds(props.screens, props.activeScreen);
+    const order = new Map<number, number>();
+    props.screens.forEach((id) => order.set(id, 0));
+    orderedIds.forEach((id, index) => order.set(id, index + 1));
+    return order;
+  }, [props.activeScreen, props.screens]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -440,7 +510,8 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
         framebuf={fb}
         active={i === props.activeScreen}
         font={font}
-        colorPalette={props.getColorPaletteByIndex(framebufId)}
+        currentPaletteId={props.currentPaletteId}
+        paletteUpdateOrder={paletteUpdateOrder.get(framebufId) ?? 0}
         setMetadata={props.setFramebufMetadata}
         showColorModeLabels={props.showColorModeLabels}
       />
@@ -475,7 +546,7 @@ export default connect(
       screens: screensSelectors.getScreens(state),
       getFramebufByIndex: (idx: number) => selectors.getFramebufByIndex(state, idx),
       getFont: (fb: Framebuf) => selectors.getFramebufFont(state, fb),
-      getColorPaletteByIndex: (idx: number) => getEffectiveColorPalette(state, idx),
+      currentPaletteId: getEffectivePaletteId(state, null),
       showColorModeLabels: state.toolbar.showColorModeLabels
     }
   },

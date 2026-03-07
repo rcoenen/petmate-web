@@ -21,6 +21,7 @@ const CANCEL_EDITS = 'CANCEL_EDITS'
 const SET_SELECTED_COLOR_PALETTE = 'SET_SELECTED_COLOR_PALETTE'
 const SET_INTEGER_SCALE = 'SET_INTEGER_SCALE'
 const SET_CRT_FILTER = 'SET_CRT_FILTER'
+let persistTimer: number | null = null;
 
 //const CONFIG_FILE_VERSION = 1
 
@@ -73,6 +74,18 @@ function saveEdits (): ThunkAction<void, RootState, undefined, Action> {
   }
 }
 
+function persistSavedSoon(delayMs: number = 200): ThunkAction<void, RootState, undefined, Action> {
+  return (_dispatch, getState) => {
+    if (persistTimer !== null) {
+      window.clearTimeout(persistTimer);
+    }
+    persistTimer = window.setTimeout(() => {
+      persistTimer = null;
+      saveSettings(getState().settings.saved);
+    }, delayMs);
+  };
+}
+
 interface BranchArgs {
   branch: EditBranch;
 }
@@ -103,6 +116,7 @@ type Actions = ActionsUnion<typeof actionCreators>
 export const actions = {
   ...actionCreators,
   saveEdits,
+  persistSavedSoon,
 };
 
 export type PropsFromDispatch = DispatchPropsFromActions<typeof actions>;

@@ -17,6 +17,7 @@ import {
   CONVERTER_PRESETS,
   PALETTES,
 } from '../utils/importers/imageConverter';
+import type { StandardAccelerationPath } from '../utils/importers/imageConverter';
 import styles from './ImageConverterModal.module.css';
 
 const STORAGE_KEY = 'petsciishop-image-converter-settings';
@@ -39,6 +40,10 @@ function getCharsetIndicator(charset: ConversionResult['charset']): { sample: st
     return { sample: 'abc', label: 'Lowercase charset selected' };
   }
   return { sample: 'ABC', label: 'Uppercase charset selected' };
+}
+
+function getStandardBackendLabel(backend: StandardAccelerationPath): string {
+  return backend === 'wasm' ? 'WASM' : 'JS fallback';
 }
 
 function sanitizeScreenName(name: string): string | undefined {
@@ -400,6 +405,7 @@ export default function ImageConverterModal() {
   const [resultSignatures, setResultSignatures] = useState<PreviewSignatures>({});
   const [previewTimings, setPreviewTimings] = useState<PreviewTimings>(createEmptyPreviewTimings);
   const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
+  const [standardBackend, setStandardBackend] = useState<StandardAccelerationPath | null>(null);
 
   const stdCanvasRef = useRef<HTMLCanvasElement>(null);
   const ecmCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -435,6 +441,7 @@ export default function ImageConverterModal() {
     setResults(null);
     setResultSignatures({});
     setPreviewTimings(createEmptyPreviewTimings());
+    setStandardBackend(null);
     setProgress({ stage: '', detail: '', pct: 0 });
     setActiveRenderMode(null);
     setConverting(false);
@@ -523,6 +530,9 @@ export default function ImageConverterModal() {
       }
       return next;
     });
+    if (queuedModes.includes('standard')) {
+      setStandardBackend(null);
+    }
     let nextResults = trimResultsForSettings(initialResults, s);
     let nextSignatures = trimSignaturesForSettings(initialSignatures, s);
     try {
@@ -551,6 +561,14 @@ export default function ImageConverterModal() {
             }
             setProgress({ stage, detail, pct });
           },
+          mode === 'standard'
+            ? backend => {
+              if (conversionId !== conversionIdRef.current) {
+                return;
+              }
+              setStandardBackend(backend);
+            }
+            : undefined,
           () => conversionId !== conversionIdRef.current
         );
         if (conversionId !== conversionIdRef.current) {
@@ -612,6 +630,7 @@ export default function ImageConverterModal() {
         setResults(null);
         setResultSignatures({});
         setPreviewTimings(createEmptyPreviewTimings());
+        setStandardBackend(null);
         setProgress({ stage: '', detail: '', pct: 0 });
         setActiveRenderMode(null);
         setConverting(false);
@@ -750,6 +769,12 @@ export default function ImageConverterModal() {
     Boolean(results?.mcm),
     mcmStale
   );
+  const standardLiveBackendLabel = converting && activeRenderMode === 'standard' && standardBackend
+    ? getStandardBackendLabel(standardBackend)
+    : null;
+  const standardCompletedBackendLabel = results?.standard?.accelerationBackend && !standardStale
+    ? getStandardBackendLabel(results.standard.accelerationBackend)
+    : null;
 
   const handleManualRerender = useCallback(() => {
     if (!image || converting || dirtyModes.length === 0) {
@@ -973,6 +998,7 @@ export default function ImageConverterModal() {
                             <div className={styles.previewPlaceholderFill} style={{ width: `${standardPending.pct}%` }} />
                           </div>
                           {standardLiveTiming && <div className={styles.previewTimingLive}>{standardLiveTiming}</div>}
+                          {standardLiveBackendLabel && <div className={styles.previewBackendBadge}>{standardLiveBackendLabel}</div>}
                         </div>
                       </div>
                     )}
@@ -981,6 +1007,7 @@ export default function ImageConverterModal() {
                     <span className={styles.charsetSample}>{getCharsetIndicator(results.standard.charset).sample}</span>
                     <span>{getCharsetIndicator(results.standard.charset).label}</span>
                   </div>
+                  {standardCompletedBackendLabel && <div className={styles.previewBackendBadge}>{standardCompletedBackendLabel}</div>}
                   {standardCompletedTiming && <div className={styles.previewTimingDone}>{standardCompletedTiming}</div>}
                   <button
                     className={styles.importBtn}
@@ -998,6 +1025,7 @@ export default function ImageConverterModal() {
                       <div className={styles.previewPlaceholderFill} style={{ width: `${standardPending.pct}%` }} />
                     </div>
                     {standardLiveTiming && <div className={styles.previewTimingLive}>{standardLiveTiming}</div>}
+                    {standardLiveBackendLabel && <div className={styles.previewBackendBadge}>{standardLiveBackendLabel}</div>}
                   </div>
                 </div>
                 </div>

@@ -1,8 +1,7 @@
 import type {
-  ConverterCharset,
   ConverterFontBits,
   ConverterSettings,
-  ConversionResult,
+  StandardAccelerationPath,
 } from './imageConverter';
 import {
   buildAlignmentOffsets,
@@ -19,39 +18,46 @@ import type {
   StandardWorkerResponseMessage,
 } from './imageConverterWorkerProtocol';
 
-type ComboJob = {
-  comboId: number;
-  charset: ConverterCharset;
+type OffsetJob = {
+  offsetId: number;
   offset: AlignmentOffset;
 };
 
 type WorkerSlot = {
+  id: number;
   worker: Worker;
   busy: boolean;
   currentRequestId: number | null;
-  currentComboId: number | null;
+  currentOffsetId: number | null;
+};
+
+type WorkerReadyStatus = {
+  workerId: number;
+  wasmEnabled: boolean;
+  wasmError?: string;
 };
 
 type ActiveRequest = {
   requestId: number;
-  queue: ComboJob[];
+  queue: OffsetJob[];
   inflight: number;
   completed: number;
   total: number;
   best?: StandardSolvedModeCandidate;
   cancelled: boolean;
   cancelTimer: ReturnType<typeof setInterval> | null;
+  startedAt: number;
   onProgress: ProgressCallback;
+  onStandardBackend?: (backend: StandardAccelerationPath) => void;
   resolve: (result: StandardSolvedModeCandidate | undefined) => void;
   reject: (error: unknown) => void;
 };
 
-function buildComboJobs(): ComboJob[] {
-  const jobs: ComboJob[] = [];
-  let comboId = 0;
+function buildOffsetJobs(): OffsetJob[] {
+  const jobs: OffsetJob[] = [];
+  let offsetId = 0;
   for (const offset of buildAlignmentOffsets()) {
-    jobs.push({ comboId: comboId++, charset: 'upper', offset });
-    jobs.push({ comboId: comboId++, charset: 'lower', offset });
+    jobs.push({ offsetId: offsetId++, offset });
   }
   return jobs;
 }
@@ -59,25 +65,31 @@ function buildComboJobs(): ComboJob[] {
 class StandardWorkerPool {
   private readonly slots: WorkerSlot[];
   private readonly ready: Promise<void>;
+  private backend: StandardAccelerationPath = 'js';
   private nextRequestId = 1;
   private activeRequest: ActiveRequest | null = null;
 
   constructor(fontBitsByCharset: ConverterFontBits) {
     const hardware = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
     const workerCount = Math.max(1, Math.min(8, Math.max(1, hardware - 1)));
-    this.slots = Array.from({ length: workerCount }, () => ({
+    this.slots = Array.from({ length: workerCount }, (_, index) => ({
+      id: index + 1,
       worker: new Worker(new URL('./imageConverterWorker.ts', import.meta.url), { type: 'module' }),
       busy: false,
       currentRequestId: null,
-      currentComboId: null,
+      currentOffsetId: null,
     }));
 
-    this.ready = Promise.all(this.slots.map(slot => new Promise<void>((resolve, reject) => {
+    this.ready = Promise.all(this.slots.map(slot => new Promise<WorkerReadyStatus>((resolve, reject) => {
       const handleMessage = (event: MessageEvent<StandardWorkerResponseMessage>) => {
         if (event.data.type === 'ready') {
           slot.worker.removeEventListener('message', handleMessage);
           slot.worker.removeEventListener('error', handleError);
-          resolve();
+          resolve({
+            workerId: slot.id,
+            wasmEnabled: event.data.wasmEnabled,
+            wasmError: event.data.wasmError,
+          });
         }
       };
       const handleError = (event: ErrorEvent) => {
@@ -91,7 +103,26 @@ class StandardWorkerPool {
         type: 'init',
         fontBitsByCharset,
       } satisfies StandardWorkerRequestMessage);
-    }))).then(() => {
+    }))).then(workerStatuses => {
+      this.backend = workerStatuses.every(status => status.wasmEnabled) ? 'wasm' : 'js';
+      if (this.backend === 'wasm') {
+        console.info('[TruSkii3000] Standard worker pool ready with WASM in all workers.', {
+          workerCount: workerStatuses.length,
+          workers: workerStatuses.map(status => ({
+            workerId: status.workerId,
+            backend: 'wasm',
+          })),
+        });
+      } else {
+        console.warn('[TruSkii3000] Standard worker pool using JS fallback.', {
+          workerCount: workerStatuses.length,
+          workers: workerStatuses.map(status => ({
+            workerId: status.workerId,
+            backend: status.wasmEnabled ? 'wasm' : 'js',
+            wasmError: status.wasmError,
+          })),
+        });
+      }
       this.slots.forEach(slot => {
         slot.worker.onmessage = event => this.handleWorkerMessage(slot, event.data as StandardWorkerResponseMessage);
         slot.worker.onerror = event => this.handleWorkerError(slot, event);
@@ -103,6 +134,7 @@ class StandardWorkerPool {
     preprocessed: StandardPreprocessedImage,
     settings: ConverterSettings,
     onProgress: ProgressCallback,
+    onStandardBackend?: (backend: StandardAccelerationPath) => void,
     shouldCancel?: () => boolean
   ): Promise<StandardSolvedModeCandidate | undefined> {
     await this.ready;
@@ -113,7 +145,7 @@ class StandardWorkerPool {
     }
 
     const requestId = this.nextRequestId++;
-    const queue = buildComboJobs();
+    const queue = buildOffsetJobs();
     const active: ActiveRequest = {
       requestId,
       queue,
@@ -122,11 +154,14 @@ class StandardWorkerPool {
       total: queue.length,
       cancelled: false,
       cancelTimer: null,
+      startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
       onProgress,
+      onStandardBackend,
       resolve: () => {},
       reject: () => {},
     };
     this.activeRequest = active;
+    onStandardBackend?.(this.backend);
 
     this.slots.forEach(slot => {
       slot.worker.postMessage({
@@ -164,13 +199,12 @@ class StandardWorkerPool {
       if (!job) break;
       slot.busy = true;
       slot.currentRequestId = active.requestId;
-      slot.currentComboId = job.comboId;
+      slot.currentOffsetId = job.offsetId;
       active.inflight++;
       slot.worker.postMessage({
-        type: 'solve-standard-combo',
+        type: 'solve-standard-offset',
         requestId: active.requestId,
-        comboId: job.comboId,
-        charset: job.charset,
+        offsetId: job.offsetId,
         offset: job.offset,
       } satisfies StandardWorkerRequestMessage);
     }
@@ -183,13 +217,14 @@ class StandardWorkerPool {
       return;
     }
 
-    if (message.type === 'combo-result') {
+    if (message.type === 'offset-result') {
       this.releaseSlot(slot);
       active.completed += 1;
       active.inflight -= 1;
       const solved: StandardSolvedModeCandidate = {
         conversion: message.conversion,
         error: message.error,
+        executionPath: this.backend,
       };
       if (!active.best || solved.error < active.best.error) {
         active.best = solved;
@@ -240,6 +275,13 @@ class StandardWorkerPool {
     }
     if (active.completed === active.total && active.inflight === 0) {
       const result = active.best;
+      const elapsedMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - active.startedAt;
+      console.info('[TruSkii3000] Standard conversion finished.', {
+        backend: this.backend,
+        alignments: active.total,
+        elapsedMs: Math.round(elapsedMs),
+        elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
+      });
       this.cleanupRequestData(active.requestId);
       this.clearActiveRequest();
       active.resolve(result);
@@ -297,7 +339,7 @@ class StandardWorkerPool {
   private releaseSlot(slot: WorkerSlot) {
     slot.busy = false;
     slot.currentRequestId = null;
-    slot.currentComboId = null;
+    slot.currentOffsetId = null;
   }
 }
 
@@ -319,13 +361,14 @@ export async function runStandardConversionInWorkers(
   settings: ConverterSettings,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
+  onStandardBackend?: (backend: StandardAccelerationPath) => void,
   shouldCancel?: () => boolean
 ): Promise<StandardSolvedModeCandidate | undefined> {
   if (!supportsWorkerAcceleration()) {
     throw new Error('Standard worker acceleration is not supported.');
   }
   const pool = await getPool(fontBitsByCharset);
-  return await pool.run(preprocessed, settings, onProgress, shouldCancel);
+  return await pool.run(preprocessed, settings, onProgress, onStandardBackend, shouldCancel);
 }
 
 export function disposeStandardConverterWorkers() {

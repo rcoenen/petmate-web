@@ -4,9 +4,13 @@ import {
   buildPaletteColorsById,
   buildPaletteMetricData,
   ConversionCancelledError,
-  solveStandardCombo,
+  solveStandardOffset,
 } from './imageConverterStandardCore';
-import type { CharsetConversionContext } from './imageConverterStandardCore';
+import type {
+  CharsetConversionContext,
+  StandardCandidateScoringKernel,
+} from './imageConverterStandardCore';
+import { StandardWasmKernel } from './imageConverterStandardWasm';
 import type {
   StandardWorkerRequestMessage,
   StandardWorkerResponseMessage,
@@ -16,10 +20,11 @@ type WorkerState = {
   contexts: Record<ConverterCharset, CharsetConversionContext> | null;
   activeRequests: Set<number>;
   requestData: Map<number, {
-    preprocessed: Parameters<typeof solveStandardCombo>[0];
-    settings: Parameters<typeof solveStandardCombo>[1];
+    preprocessed: Parameters<typeof solveStandardOffset>[0];
+    settings: Parameters<typeof solveStandardOffset>[1];
   }>;
   paletteCache: Map<string, ReturnType<typeof buildPaletteMetricData>>;
+  scoringKernel: StandardCandidateScoringKernel | null;
 };
 
 const state: WorkerState = {
@@ -27,6 +32,7 @@ const state: WorkerState = {
   activeRequests: new Set(),
   requestData: new Map(),
   paletteCache: new Map(),
+  scoringKernel: null,
 };
 
 function post(message: StandardWorkerResponseMessage) {
@@ -50,7 +56,18 @@ self.onmessage = async (event: MessageEvent<StandardWorkerRequestMessage>) => {
         upper: buildCharsetConversionContext(message.fontBitsByCharset.upper),
         lower: buildCharsetConversionContext(message.fontBitsByCharset.lower),
       };
-      post({ type: 'ready' });
+      const wasm = await StandardWasmKernel.create();
+      state.scoringKernel = wasm.kernel;
+      if (wasm.kernel) {
+        console.info('[TruSkii3000] Standard worker initialized with WASM kernel.');
+      } else {
+        console.warn('[TruSkii3000] Standard worker falling back to JavaScript scoring.', wasm.error);
+      }
+      post({
+        type: 'ready',
+        wasmEnabled: Boolean(wasm.kernel),
+        wasmError: wasm.error,
+      });
       return;
     }
 
@@ -70,7 +87,7 @@ self.onmessage = async (event: MessageEvent<StandardWorkerRequestMessage>) => {
       return;
     }
 
-    if (message.type === 'solve-standard-combo') {
+    if (message.type === 'solve-standard-offset') {
       if (!state.contexts) {
         throw new Error('Worker not initialized');
       }
@@ -78,24 +95,23 @@ self.onmessage = async (event: MessageEvent<StandardWorkerRequestMessage>) => {
       if (!request) {
         throw new Error(`Unknown worker request ${message.requestId}`);
       }
-      const result = await solveStandardCombo(
+      const result = await solveStandardOffset(
         request.preprocessed,
         request.settings,
-        state.contexts[message.charset],
+        state.contexts,
         getMetrics(request.settings.paletteId),
-        message.charset,
         message.offset,
-        undefined,
+        state.scoringKernel ?? undefined,
         () => !state.activeRequests.has(message.requestId)
       );
       if (!state.activeRequests.has(message.requestId)) {
-        post({ type: 'cancelled', requestId: message.requestId, comboId: message.comboId });
+        post({ type: 'cancelled', requestId: message.requestId, offsetId: message.offsetId });
         return;
       }
       post({
-        type: 'combo-result',
+        type: 'offset-result',
         requestId: message.requestId,
-        comboId: message.comboId,
+        offsetId: message.offsetId,
         conversion: result.conversion,
         error: result.error,
       });
@@ -107,7 +123,7 @@ self.onmessage = async (event: MessageEvent<StandardWorkerRequestMessage>) => {
         post({
           type: 'cancelled',
           requestId: message.requestId,
-          comboId: 'comboId' in message ? message.comboId : undefined,
+          offsetId: 'offsetId' in message ? message.offsetId : undefined,
         });
       }
       return;
@@ -115,7 +131,7 @@ self.onmessage = async (event: MessageEvent<StandardWorkerRequestMessage>) => {
     post({
       type: 'error',
       requestId: 'requestId' in message ? message.requestId : undefined,
-      comboId: 'comboId' in message ? message.comboId : undefined,
+      offsetId: 'offsetId' in message ? message.offsetId : undefined,
       error: error?.message ?? String(error),
     });
   }

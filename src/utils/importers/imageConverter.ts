@@ -6,7 +6,7 @@ import { mcmForegroundColor, mcmIsMulticolorCell, mcmResolveBitPairColor } from 
 import {
   buildAlignmentOffsets as buildStandardAlignmentOffsets,
   ConversionCancelledError,
-  solveStandardCombo,
+  solveStandardOffset,
 } from './imageConverterStandardCore';
 import type { StandardSolvedModeCandidate } from './imageConverterStandardCore';
 import {
@@ -207,6 +207,7 @@ export const CONVERTER_PRESETS = [
 // --- Results ---
 
 export type ConverterCharset = 'upper' | 'lower';
+export type StandardAccelerationPath = 'wasm' | 'js';
 
 export interface ConverterFontBits {
   upper: number[];
@@ -222,6 +223,7 @@ export interface ConversionResult {
   mcmSharedColors: number[];
   charset: ConverterCharset;
   mode: 'standard' | 'ecm' | 'mcm';
+  accelerationBackend?: StandardAccelerationPath;
 }
 
 export interface ConversionOutputs {
@@ -1609,6 +1611,7 @@ function renderMcmPreview(
 // --- Mode orchestration ---
 
 export type ProgressCallback = (stage: string, detail: string, pct: number) => void;
+export type StandardBackendCallback = (backend: StandardAccelerationPath) => void;
 
 function toSolvedModeCandidate(
   candidate: StandardSolvedModeCandidate,
@@ -1624,7 +1627,10 @@ function toSolvedModeCandidate(
   const context = contexts[candidate.conversion.charset];
   return {
     result,
-    conversion: candidate.conversion,
+    conversion: {
+      ...candidate.conversion,
+      accelerationBackend: candidate.executionPath,
+    },
     preview: renderPreview(result, palette, context.ref, candidate.conversion.backgroundColor, [], 'standard'),
     error: candidate.error,
   };
@@ -1637,40 +1643,45 @@ async function solveStandardAcrossCombosSequential(
   palette: PaletteColor[],
   metrics: PaletteMetricData,
   onProgress: ProgressCallback,
+  onStandardBackend?: StandardBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
   const offsets = buildStandardAlignmentOffsets();
-  const combos: { charset: ConverterCharset; offset: AlignmentOffset }[] = [];
-  for (const offset of offsets) {
-    combos.push({ charset: 'upper', offset });
-    combos.push({ charset: 'lower', offset });
-  }
-
   let best: StandardSolvedModeCandidate | undefined;
-  onProgress('Alignment', `STANDARD 0 of ${combos.length}`, 0);
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  onStandardBackend?.('js');
+  onProgress('Alignment', `STANDARD 0 of ${offsets.length}`, 0);
 
-  for (let comboIndex = 0; comboIndex < combos.length; comboIndex++) {
-    const combo = combos[comboIndex];
+  for (let offsetIndex = 0; offsetIndex < offsets.length; offsetIndex++) {
+    const offset = offsets[offsetIndex];
     await yieldToUI(shouldCancel);
-    const solved = await solveStandardCombo(
+    const solved = await solveStandardOffset(
       preprocessed,
       settings,
-      contexts[combo.charset] as any,
+      contexts as any,
       metrics as any,
-      combo.charset,
-      combo.offset,
+      offset,
       undefined,
       shouldCancel
     );
+    solved.executionPath = 'js';
     if (!best || solved.error < best.error) {
       best = solved;
     }
     onProgress(
       'Alignment',
-      `STANDARD ${comboIndex + 1} of ${combos.length}`,
-      Math.round(((comboIndex + 1) / Math.max(1, combos.length)) * 100)
+      `STANDARD ${offsetIndex + 1} of ${offsets.length}`,
+      Math.round(((offsetIndex + 1) / Math.max(1, offsets.length)) * 100)
     );
   }
+
+  const elapsedMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+  console.info('[TruSkii3000] Standard conversion finished.', {
+    backend: 'js',
+    alignments: offsets.length,
+    elapsedMs: Math.round(elapsedMs),
+    elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
+  });
 
   return best ? toSolvedModeCandidate(best, palette, contexts) : undefined;
 }
@@ -1683,6 +1694,7 @@ async function solveStandardAcrossCombos(
   metrics: PaletteMetricData,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
+  onStandardBackend?: StandardBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
   try {
@@ -1691,6 +1703,7 @@ async function solveStandardAcrossCombos(
       settings,
       fontBitsByCharset,
       onProgress,
+      onStandardBackend,
       shouldCancel
     );
     if (workerSolved) {
@@ -1711,6 +1724,7 @@ async function solveStandardAcrossCombos(
     palette,
     metrics,
     onProgress,
+    onStandardBackend,
     shouldCancel
   );
 }
@@ -1724,6 +1738,7 @@ async function solveModeAcrossCombos(
   metrics: PaletteMetricData,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
+  onStandardBackend?: StandardBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
   if (mode === 'standard') {
@@ -1735,6 +1750,7 @@ async function solveModeAcrossCombos(
       metrics,
       fontBitsByCharset,
       onProgress,
+      onStandardBackend,
       shouldCancel
     );
   }
@@ -1786,6 +1802,7 @@ export async function convertImage(
   settings: ConverterSettings,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
+  onStandardBackend?: StandardBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<ConversionOutputs> {
   const paletteData = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
@@ -1814,7 +1831,18 @@ export async function convertImage(
     const modeStart = Math.round((modeIndex / activeModes.length) * 100);
     const modeSpan = Math.max(1, Math.round(100 / activeModes.length));
     const scopedProgress = createScopedProgress(onProgress, modeStart, modeSpan);
-    const solved = await solveModeAcrossCombos(mode, preprocessed, settings, contexts, palette, metrics, fontBitsByCharset, scopedProgress, shouldCancel);
+    const solved = await solveModeAcrossCombos(
+      mode,
+      preprocessed,
+      settings,
+      contexts,
+      palette,
+      metrics,
+      fontBitsByCharset,
+      scopedProgress,
+      mode === 'standard' ? onStandardBackend : undefined,
+      shouldCancel
+    );
     if (!solved) continue;
 
     if (mode === 'standard') {

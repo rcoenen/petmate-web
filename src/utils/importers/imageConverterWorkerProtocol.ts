@@ -1,4 +1,4 @@
-import type { ConverterCharset, ConverterFontBits, ConverterSettings, ConversionResult } from './imageConverter';
+import type { ConverterFontBits, ConverterSettings, ConversionResult } from './imageConverter';
 import type { AlignmentOffset, StandardPreprocessedImage } from './imageConverterStandardCore';
 
 export interface StandardWorkerInitMessage {
@@ -13,11 +13,10 @@ export interface StandardWorkerStartRequestMessage {
   settings: ConverterSettings;
 }
 
-export interface StandardWorkerSolveComboMessage {
-  type: 'solve-standard-combo';
+export interface StandardWorkerSolveOffsetMessage {
+  type: 'solve-standard-offset';
   requestId: number;
-  comboId: number;
-  charset: ConverterCharset;
+  offsetId: number;
   offset: AlignmentOffset;
 }
 
@@ -29,17 +28,19 @@ export interface StandardWorkerCancelMessage {
 export type StandardWorkerRequestMessage =
   | StandardWorkerInitMessage
   | StandardWorkerStartRequestMessage
-  | StandardWorkerSolveComboMessage
+  | StandardWorkerSolveOffsetMessage
   | StandardWorkerCancelMessage;
 
 export interface StandardWorkerReadyMessage {
   type: 'ready';
+  wasmEnabled: boolean;
+  wasmError?: string;
 }
 
 export interface StandardWorkerComboResultMessage {
-  type: 'combo-result';
+  type: 'offset-result';
   requestId: number;
-  comboId: number;
+  offsetId: number;
   conversion: ConversionResult;
   error: number;
 }
@@ -47,13 +48,13 @@ export interface StandardWorkerComboResultMessage {
 export interface StandardWorkerCancelledMessage {
   type: 'cancelled';
   requestId: number;
-  comboId?: number;
+  offsetId?: number;
 }
 
 export interface StandardWorkerErrorMessage {
   type: 'error';
   requestId?: number;
-  comboId?: number;
+  offsetId?: number;
   error: string;
 }
 

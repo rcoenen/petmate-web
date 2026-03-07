@@ -4,6 +4,7 @@ import type {
   ConverterCharset,
   ConverterSettings,
   ConversionResult,
+  StandardAccelerationPath,
 } from './imageConverter';
 
 const CANVAS_WIDTH = 320;
@@ -50,6 +51,12 @@ export interface CharsetConversionContext {
   ref: Uint8Array[];
   refSetCount: Int32Array;
   setPositions: Uint8Array[];
+  flatPositions: Uint8Array;
+  positionOffsets: Int32Array;
+}
+
+export interface StandardCandidateScoringKernel {
+  computeSetErrs(weightedPixelErrors: Float32Array, context: CharsetConversionContext): Float32Array;
 }
 
 export interface StandardPreprocessedImage {
@@ -101,6 +108,7 @@ interface PetsciiResult {
 export interface StandardSolvedModeCandidate {
   conversion: ConversionResult;
   error: number;
+  executionPath?: StandardAccelerationPath;
 }
 
 export type ProgressCallback = (stage: string, detail: string, pct: number) => void;
@@ -186,8 +194,11 @@ export function buildPaletteMetricData(palette: PaletteColor[]): PaletteMetricDa
 export function buildCharsetConversionContext(fontBits: number[]): CharsetConversionContext {
   const ref: Uint8Array[] = [];
   const setPositions: Uint8Array[] = [];
+  const allPositions: number[] = [];
+  const positionOffsets = new Int32Array(257);
 
   for (let ch = 0; ch < 256; ch++) {
+    positionOffsets[ch] = allPositions.length;
     const char = new Uint8Array(64);
     const positions: number[] = [];
     for (let row = 0; row < 8; row++) {
@@ -196,15 +207,25 @@ export function buildCharsetConversionContext(fontBits: number[]): CharsetConver
         const value = (byte >> bit) & 1;
         const index = row * 8 + (7 - bit);
         char[index] = value;
-        if (value) positions.push(index);
+        if (value) {
+          positions.push(index);
+          allPositions.push(index);
+        }
       }
     }
     ref.push(char);
     setPositions.push(Uint8Array.from(positions));
   }
+  positionOffsets[256] = allPositions.length;
 
   const refSetCount = new Int32Array(setPositions.map(positions => positions.length));
-  return { ref, refSetCount, setPositions };
+  return {
+    ref,
+    refSetCount,
+    setPositions,
+    flatPositions: Uint8Array.from(allPositions),
+    positionOffsets,
+  };
 }
 
 export function buildAlignmentOffsets(): AlignmentOffset[] {
@@ -515,35 +536,64 @@ function makeBinaryCandidate(
   };
 }
 
+// --- Reusable setErr buffer (safe: callers use result synchronously before next call) ---
+
+const _reusableSetErrs = new Float32Array(256 * 16);
+
+function computeSetErrMatrixJs(
+  weightedPixelErrors: Float32Array,
+  context: CharsetConversionContext
+): Float32Array {
+  _reusableSetErrs.fill(0);
+  const { flatPositions, positionOffsets } = context;
+
+  for (let ch = 0; ch < 256; ch++) {
+    const start = positionOffsets[ch];
+    const end = positionOffsets[ch + 1];
+    const rowBase = ch << 4;
+    for (let i = start; i < end; i++) {
+      const base = flatPositions[i] << 4;
+      for (let color = 0; color < 16; color++) {
+        _reusableSetErrs[rowBase + color] += weightedPixelErrors[base + color];
+      }
+    }
+  }
+
+  return _reusableSetErrs;
+}
+
+function computeSetErrMatrix(
+  cell: SourceCellData,
+  context: CharsetConversionContext,
+  scoringKernel?: StandardCandidateScoringKernel
+): Float32Array {
+  return scoringKernel
+    ? scoringKernel.computeSetErrs(cell.weightedPixelErrors, context)
+    : computeSetErrMatrixJs(cell.weightedPixelErrors, context);
+}
+
 function buildBinaryBestErrorByBackground(
   cell: SourceCellData,
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
-  settings: ConverterSettings
+  settings: ConverterSettings,
+  scoringKernel?: StandardCandidateScoringKernel
 ): Float64Array {
   const best = new Float64Array(16);
   best.fill(Infinity);
-  const setErr = new Float64Array(16);
+  const setErrMatrix = computeSetErrMatrix(cell, context, scoringKernel);
 
   for (let ch = 0; ch < 256; ch++) {
-    setErr.fill(0);
-    const positions = context.setPositions[ch];
-    for (let i = 0; i < positions.length; i++) {
-      const base = positions[i] * 16;
-      for (let color = 0; color < 16; color++) {
-        setErr[color] += cell.weightedPixelErrors[base + color];
-      }
-    }
-
+    const rowBase = ch * 16;
     const nSet = context.refSetCount[ch];
     for (let bg = 0; bg < 16; bg++) {
-      const bgErr = cell.totalErrByColor[bg] - setErr[bg];
+      const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
       if (bgErr >= best[bg]) continue;
       for (let fg = 0; fg < 16; fg++) {
         if (fg === bg) continue;
         const renderedAvgL = (nSet * metrics.pL[fg] + (PIXELS_PER_CELL - nSet) * metrics.pL[bg]) / PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const total = bgErr + setErr[fg] + settings.lumMatchWeight * lumDiff * lumDiff;
+        const total = bgErr + setErrMatrix[rowBase + fg] + settings.lumMatchWeight * lumDiff * lumDiff;
         if (total < best[bg]) best[bg] = total;
       }
     }
@@ -552,40 +602,34 @@ function buildBinaryBestErrorByBackground(
   return best;
 }
 
-function buildBinaryCandidatePool(
+function buildBinaryCandidatePoolsForCell(
   cell: SourceCellData,
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
   backgrounds: number[],
-  poolSize: number
-): ScreenCandidate[] {
-  const pool: ScreenCandidate[] = [];
-  const setErr = new Float64Array(16);
+  poolSize: number,
+  scoringKernel?: StandardCandidateScoringKernel
+): ScreenCandidate[][] {
+  const pools = backgrounds.map(() => [] as ScreenCandidate[]);
+  const setErrMatrix = computeSetErrMatrix(cell, context, scoringKernel);
 
   for (let ch = 0; ch < 256; ch++) {
-    setErr.fill(0);
-    const positions = context.setPositions[ch];
-    for (let i = 0; i < positions.length; i++) {
-      const base = positions[i] * 16;
-      for (let color = 0; color < 16; color++) {
-        setErr[color] += cell.weightedPixelErrors[base + color];
-      }
-    }
-
+    const rowBase = ch * 16;
     const nSet = context.refSetCount[ch];
-    const worst = pool.length >= poolSize ? pool[pool.length - 1].baseError : Infinity;
 
     for (let bi = 0; bi < backgrounds.length; bi++) {
       const bg = backgrounds[bi];
-      const bgErr = cell.totalErrByColor[bg] - setErr[bg];
+      const pool = pools[bi];
+      const worst = pool.length >= poolSize ? pool[pool.length - 1].baseError : Infinity;
+      const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
       if (bgErr >= worst) continue;
 
       for (let fg = 0; fg < 16; fg++) {
         if (fg === bg) continue;
         const renderedAvgL = (nSet * metrics.pL[fg] + (PIXELS_PER_CELL - nSet) * metrics.pL[bg]) / PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const total = bgErr + setErr[fg] + settings.lumMatchWeight * lumDiff * lumDiff;
+        const total = bgErr + setErrMatrix[rowBase + fg] + settings.lumMatchWeight * lumDiff * lumDiff;
         if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
           insertTopCandidate(
             pool,
@@ -597,10 +641,14 @@ function buildBinaryCandidatePool(
     }
   }
 
-  if (pool.length > 0) return pool;
-  const bg = backgrounds[0] ?? 0;
-  const fg = bg === 0 ? 1 : 0;
-  return [makeBinaryCandidate(context.ref[32], 32, bg, fg, Infinity, metrics.pairDiff, metrics.maxPairDiff)];
+  for (let bi = 0; bi < backgrounds.length; bi++) {
+    if (pools[bi].length > 0) continue;
+    const bg = backgrounds[bi] ?? 0;
+    const fg = bg === 0 ? 1 : 0;
+    pools[bi] = [makeBinaryCandidate(context.ref[32], 32, bg, fg, Infinity, metrics.pairDiff, metrics.maxPairDiff)];
+  }
+
+  return pools;
 }
 
 function computeNeighborPenalty(
@@ -618,9 +666,6 @@ function computeNeighborPenalty(
     ? hBoundaryOffset(boundaryCy, boundaryCx)
     : vBoundaryOffset(boundaryCy, boundaryCx);
   const boundaryDiffs = horizontal ? analysis.hBoundaryDiffs : analysis.vBoundaryDiffs;
-  const boundaryMean = horizontal
-    ? analysis.hBoundaryMeans[hBoundaryMeanOffset(boundaryCy, boundaryCx)]
-    : analysis.vBoundaryMeans[vBoundaryMeanOffset(boundaryCy, boundaryCx)];
 
   let edgePenalty = 0;
   for (let i = 0; i < 8; i++) {
@@ -638,9 +683,7 @@ function computeNeighborPenalty(
     repeatPenalty = REPEAT_PENALTY * scale;
   }
 
-  const modePenalty = 0;
-
-  return CONTINUITY_PENALTY * (edgePenalty / 8) + repeatPenalty + modePenalty;
+  return CONTINUITY_PENALTY * (edgePenalty / 8) + repeatPenalty;
 }
 
 async function solveScreen(
@@ -674,15 +717,19 @@ async function solveScreen(
       for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex++) {
         const candidate = pool[candidateIndex];
         let cost = candidate.baseError;
+        if (cost >= bestCost) continue;
 
         if (cx > 0) {
           cost += computeNeighborPenalty(selected[cellIndex - 1], candidate, metrics, analysis, cy, cx - 1, true);
+          if (cost >= bestCost) continue;
         }
         if (cx < GRID_WIDTH - 1) {
           cost += computeNeighborPenalty(candidate, selected[cellIndex + 1], metrics, analysis, cy, cx, true);
+          if (cost >= bestCost) continue;
         }
         if (cy > 0) {
           cost += computeNeighborPenalty(selected[cellIndex - GRID_WIDTH], candidate, metrics, analysis, cy - 1, cx, false);
+          if (cost >= bestCost) continue;
         }
         if (cy < GRID_HEIGHT - 1) {
           cost += computeNeighborPenalty(candidate, selected[cellIndex + GRID_WIDTH], metrics, analysis, cy, cx, false);
@@ -736,52 +783,77 @@ async function solveScreen(
   return { screencodes, colors, bgIndices, totalError };
 }
 
-async function buildBinaryCandidatePools(
+async function buildBinaryCandidatePoolsByBackground(
   cells: SourceCellData[],
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
   backgrounds: number[],
+  scoringKernel?: StandardCandidateScoringKernel,
   shouldCancel?: () => boolean
-): Promise<ScreenCandidate[][]> {
-  const candidatePools = new Array<ScreenCandidate[]>(cells.length);
+): Promise<ScreenCandidate[][][]> {
+  const candidatePoolsByBackground = backgrounds.map(() => new Array<ScreenCandidate[]>(cells.length));
   for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
-    candidatePools[cellIndex] = buildBinaryCandidatePool(
-      cells[cellIndex], context, metrics, settings, backgrounds, STANDARD_POOL_SIZE
+    const cellPools = buildBinaryCandidatePoolsForCell(
+      cells[cellIndex], context, metrics, settings, backgrounds, STANDARD_POOL_SIZE, scoringKernel
     );
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      candidatePoolsByBackground[bi][cellIndex] = cellPools[bi];
+    }
     if ((cellIndex & 127) === 0) {
       await yieldToUI(shouldCancel);
     }
   }
-  return candidatePools;
+  return candidatePoolsByBackground;
 }
 
-export async function solveStandardCombo(
-  preprocessed: StandardPreprocessedImage,
+async function solveStandardCharsetForAnalysis(
+  analysis: SourceAnalysis,
   settings: ConverterSettings,
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   charset: ConverterCharset,
-  offset: AlignmentOffset,
+  scoringKernel?: StandardCandidateScoringKernel,
   onProgress?: ProgressCallback,
   shouldCancel?: () => boolean
 ): Promise<StandardSolvedModeCandidate> {
-  const analysis = analyzeAlignedSourceImage(preprocessed, metrics, settings, offset.x, offset.y);
   const backgroundColors = settings.manualBgColor !== null ? [settings.manualBgColor] : buildBackgroundColorList();
   const sampleIndices = getSampleIndices(analysis.rankedIndices, STANDARD_SAMPLE_COUNT);
   const coarseScores = new Float64Array(16);
 
+  const tCoarse0 = performance.now();
   for (const cellIndex of sampleIndices) {
-    const bestByBg = buildBinaryBestErrorByBackground(analysis.cells[cellIndex], context, metrics, settings);
+    const bestByBg = buildBinaryBestErrorByBackground(
+      analysis.cells[cellIndex],
+      context,
+      metrics,
+      settings,
+      scoringKernel
+    );
     for (let bg = 0; bg < 16; bg++) coarseScores[bg] += bestByBg[bg];
   }
+  const tCoarse1 = performance.now();
 
   const finalists = backgroundColors
     .map(bg => ({ bg, score: coarseScores[bg] }))
     .sort((a, b) => a.score - b.score)
     .slice(0, Math.min(STANDARD_FINALIST_COUNT, backgroundColors.length));
 
+  const finalistBackgrounds = finalists.map(finalist => finalist.bg);
+  const tPool0 = performance.now();
+  const candidatePoolsByBackground = await buildBinaryCandidatePoolsByBackground(
+    analysis.cells,
+    context,
+    metrics,
+    settings,
+    finalistBackgrounds,
+    scoringKernel,
+    shouldCancel
+  );
+  const tPool1 = performance.now();
+
   let best: StandardSolvedModeCandidate | undefined;
+  let solveTime = 0;
   for (let index = 0; index < finalists.length; index++) {
     const bg = finalists[index].bg;
     onProgress?.(
@@ -791,10 +863,10 @@ export async function solveStandardCombo(
     );
     await yieldToUI(shouldCancel);
 
-    const candidatePools = await buildBinaryCandidatePools(
-      analysis.cells, context, metrics, settings, [bg], shouldCancel
-    );
+    const candidatePools = candidatePoolsByBackground[index];
+    const tSolve0 = performance.now();
     const solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel);
+    solveTime += performance.now() - tSolve0;
     const conversion: ConversionResult = {
       screencodes: solved.screencodes,
       colors: solved.colors,
@@ -809,6 +881,74 @@ export async function solveStandardCombo(
       conversion,
       error: solved.totalError,
     };
+    if (!best || candidate.error < best.error) {
+      best = candidate;
+    }
+  }
+
+  console.log(
+    `[TruSkii3000]   stages: coarse=${(tCoarse1 - tCoarse0).toFixed(1)}ms ` +
+    `pools=${(tPool1 - tPool0).toFixed(1)}ms solve=${solveTime.toFixed(1)}ms`
+  );
+
+  return best!;
+}
+
+export async function solveStandardCombo(
+  preprocessed: StandardPreprocessedImage,
+  settings: ConverterSettings,
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  charset: ConverterCharset,
+  offset: AlignmentOffset,
+  scoringKernel?: StandardCandidateScoringKernel,
+  onProgress?: ProgressCallback,
+  shouldCancel?: () => boolean
+): Promise<StandardSolvedModeCandidate> {
+  const t0 = performance.now();
+  const analysis = analyzeAlignedSourceImage(preprocessed, metrics, settings, offset.x, offset.y);
+  const t1 = performance.now();
+  const result = await solveStandardCharsetForAnalysis(
+    analysis,
+    settings,
+    context,
+    metrics,
+    charset,
+    scoringKernel,
+    onProgress,
+    shouldCancel
+  );
+  const t2 = performance.now();
+  console.log(
+    `[TruSkii3000] combo ${charset} (${offset.x},${offset.y}): ` +
+    `analyze=${(t1 - t0).toFixed(1)}ms solve=${(t2 - t1).toFixed(1)}ms total=${(t2 - t0).toFixed(1)}ms`
+  );
+  return result;
+}
+
+export async function solveStandardOffset(
+  preprocessed: StandardPreprocessedImage,
+  settings: ConverterSettings,
+  contexts: Record<ConverterCharset, CharsetConversionContext>,
+  metrics: PaletteMetricData,
+  offset: AlignmentOffset,
+  scoringKernel?: StandardCandidateScoringKernel,
+  shouldCancel?: () => boolean
+): Promise<StandardSolvedModeCandidate> {
+  const analysis = analyzeAlignedSourceImage(preprocessed, metrics, settings, offset.x, offset.y);
+  let best: StandardSolvedModeCandidate | undefined;
+
+  for (const charset of ['upper', 'lower'] as const) {
+    const candidate = await solveStandardCharsetForAnalysis(
+      analysis,
+      settings,
+      contexts[charset],
+      metrics,
+      charset,
+      scoringKernel,
+      undefined,
+      shouldCancel
+    );
     if (!best || candidate.error < best.error) {
       best = candidate;
     }

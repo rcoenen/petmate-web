@@ -378,6 +378,20 @@
   color: #9ec8af;
 }
 
+.previewBackendBadge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid rgba(158, 200, 175, 0.45);
+  border-radius: 999px;
+  background: rgba(56, 109, 78, 0.2);
+  color: #d8f0df;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .charsetSample {
   min-width: 34px;
   padding: 2px 6px;

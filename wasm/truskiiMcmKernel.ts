@@ -12,6 +12,13 @@
  *
  * The TypeScript solver uses those matrices later when it evaluates legal MCM
  * candidates, global colors, and mixed hires/multicolor screens.
+ *
+ * What we know about speed so far:
+ * - The biggest wins in MCM still come from broader architecture changes such
+ *   as worker execution and reduced repeated analysis.
+ * - This kernel targets one hot numeric stage inside that larger pipeline.
+ * - Total MCM time therefore depends heavily on the JS-side global search and
+ *   screen solving around it, not just on this SIMD helper.
  */
 const COLOR_COUNT: i32 = 16;
 const CHAR_COUNT: i32 = 256;

@@ -12,6 +12,13 @@
  *
  * The rest of the Standard solver still lives in TypeScript. This kernel only
  * accelerates the hottest matrix-accumulation step.
+ *
+ * What we know about speed so far:
+ * - Scalar WASM was not enough; the useful version here is the SIMD path.
+ * - On a measured reference Standard conversion, total runtime dropped from
+ *   about 13.55s to about 5.55s after the broader worker/WASM speed pass.
+ * - That improvement is not from this file alone; it combines this kernel with
+ *   surrounding solver and worker-side reductions in repeated work.
  */
 const COLOR_COUNT: i32 = 16;
 const CHAR_COUNT: i32 = 256;

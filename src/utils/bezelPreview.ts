@@ -10,8 +10,9 @@ const SCREEN_W = 623;
 const SCREEN_H = 441;
 
 export async function openBezelPreview(fb: FramebufWithFont, palette: RgbPalette): Promise<void> {
-  const { imgWidth, imgHeight } = computeOutputImageDims(fb, false);
-  const pixBuf = framebufToPixels(fb, palette, false);
+  // The bezel preview should show the full C64 output frame, including the border.
+  const { imgWidth, imgHeight } = computeOutputImageDims(fb, true);
+  const pixBuf = framebufToPixels(fb, palette, true);
 
   const petsciiCanvas = document.createElement('canvas');
   petsciiCanvas.width = imgWidth;

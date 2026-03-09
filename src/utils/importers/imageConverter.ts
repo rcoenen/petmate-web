@@ -59,8 +59,8 @@ const ECM_POOL_SIZE = 10;
 const MCM_POOL_SIZE = 10;
 const SCREEN_SOLVE_PASSES = 7;
 
-const LUMA_ERROR_WEIGHT = 1.55;
-const CHROMA_ERROR_WEIGHT = 0.85;
+const LUMA_ERROR_WEIGHT = 1.0;
+const CHROMA_ERROR_WEIGHT = 1.0;
 const REPEAT_PENALTY = 28.0;
 const CONTINUITY_PENALTY = 0.14;
 const MODE_SWITCH_PENALTY = 10.0;
@@ -75,8 +75,8 @@ const EDGE_CONTINUITY_PASSES = 3;
 const ECM_REGISTER_RESOLVE_PASSES = 4;
 const ECM_REGISTER_KMEANS_ITERATIONS = 4;
 const ECM_REGISTER_RESOLVE_ERROR_SCALE = 64.0;
-const MCM_HIRES_COLOR_PENALTY_WEIGHT = 4.0;
-const MCM_MULTICOLOR_USAGE_BONUS_WEIGHT = 4.0;
+const MCM_HIRES_COLOR_PENALTY_WEIGHT = 0;
+const MCM_MULTICOLOR_USAGE_BONUS_WEIGHT = 0;
 const ENABLE_EXPERIMENTAL_HAMMING_FAST_PATH = false;
 const ENABLE_MCM_CELL_STATE_REUSE = true;
 
@@ -248,11 +248,11 @@ export interface ConverterSettings {
 
 export type ConverterAccelerationMode = 'wasm' | 'js';
 export const CONVERTER_DEFAULTS: ConverterSettings = {
-  brightnessFactor: 1.1,
-  saturationFactor: 1.4,
-  saliencyAlpha: 3.0,
-  lumMatchWeight: 12,
-  csfWeight: 10,
+  brightnessFactor: 1.0,
+  saturationFactor: 1.0,
+  saliencyAlpha: 0.0,
+  lumMatchWeight: 0,
+  csfWeight: 0,
   includeTypographic: true,
   accelerationMode: 'wasm',
   paletteId: 'colodore',
@@ -264,18 +264,18 @@ export const CONVERTER_DEFAULTS: ConverterSettings = {
 
 export const CONVERTER_PRESETS = [
   {
-    id: 'robs-favorite',
-    name: "Rob's Favorite",
+    id: 'true-neutral',
+    name: 'True Neutral',
     ...CONVERTER_DEFAULTS,
   },
   {
-    id: 'true-neutral',
-    name: 'True Neutral',
-    brightnessFactor: 1.0,
-    saturationFactor: 1.0,
-    saliencyAlpha: 0.0,
-    lumMatchWeight: 0,
-    csfWeight: 0,
+    id: 'robs-favorite',
+    name: "Rob's Favorite",
+    brightnessFactor: 1.1,
+    saturationFactor: 1.4,
+    saliencyAlpha: 3.0,
+    lumMatchWeight: 12,
+    csfWeight: 10,
     includeTypographic: true,
     accelerationMode: 'wasm' as ConverterAccelerationMode,
     paletteId: 'colodore',
@@ -830,8 +830,9 @@ function analyzeAlignedSourceImage(
       meanL /= PIXELS_PER_CELL;
       meanA /= PIXELS_PER_CELL;
       meanB /= PIXELS_PER_CELL;
-      const variance = lumSqSum / PIXELS_PER_CELL - (lumSum / PIXELS_PER_CELL) ** 2;
-      variances[cellIndex] = variance;
+      const lumVariance = lumSqSum / PIXELS_PER_CELL - (lumSum / PIXELS_PER_CELL) ** 2;
+      const chromaMagnitudeSq = meanA * meanA + meanB * meanB;
+      variances[cellIndex] = lumVariance + 2.0 * chromaMagnitudeSq;
 
       const weights = new Float32Array(PIXELS_PER_CELL);
       if (settings.saliencyAlpha > 0) {

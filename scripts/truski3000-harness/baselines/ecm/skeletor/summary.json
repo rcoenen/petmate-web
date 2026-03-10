@@ -1,0 +1,29 @@
+{
+  "mode": "ecm",
+  "charset": "upper",
+  "backgroundColor": 9,
+  "ecmBgColors": [
+    9,
+    6,
+    15,
+    4
+  ],
+  "qualityMeanDeltaE": 0.19495407987845415,
+  "qualityPerCellHash": "748101295293b244c257e9b2a26f14b8b6166ff92d78e9acb25626636555276d",
+  "cellMetadataHash": "2c7431d8d9eb41a3bc2b90c5c1512dc1cbd28feff4605bcf73c0ab63c0b14ced",
+  "bgIndicesHash": "0813573c6cd3c7e8dde0fd25ae5faa39e8337de4295f6a1c64769b851f680d7b",
+  "mcmSharedColors": [],
+  "colorsHash": "a31117064cf0c3c809a6bbf052e7c4f09f3f4cfbf4fa2cc4bc854388b7ad1d04",
+  "screencodesHash": "8b85877b09f73ee42b2c25b9d1634abe35725c4534747cd9845b1270f703f3b2",
+  "previewHash": "1b7de1305eec46ca51afb617c34564e8fe84f744fd767f6faf0beec5b0e13a0b",
+  "imageQuality": {
+    "lumaRMSE": 0.179318,
+    "chromaRMSE": 0.084498,
+    "meanDeltaE": 0.17117,
+    "ssim": 0.208293,
+    "tileCount": 1000,
+    "worstTileDeltaE": 0.315817,
+    "worstTileIndex": 420,
+    "percentile95DeltaE": 0.223774
+  }
+}

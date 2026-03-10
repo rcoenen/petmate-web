@@ -7,6 +7,30 @@ Main implementation: `src/utils/importers/imageConverter.ts` (~2316 lines)
 
 ---
 
+## CODEX: Current Color Fidelity Investigation (2026-03-09)
+
+CODEX: Recent investigation on the Skeletor / True Neutral case found that a chroma-aware sample-selection fix for ECM/MCM global color search helped `ECM` modestly, but did **not** materially improve `Standard`, and did not materially improve `MCM` either.
+
+CODEX: Current working conclusion:
+
+CODEX: - global sample-selection bias was real and worth fixing
+
+CODEX: - but it is **not sufficient** to solve the color-fidelity problem
+
+CODEX: - the stronger remaining issue appears to be the local error metric still under-valuing chroma relative to luminance
+
+CODEX: Practical implication:
+
+CODEX: - `ECM` may now be near its realistic ceiling on some images
+
+CODEX: - `Standard` is still the clearest evidence that color matching is wrong
+
+CODEX: - `MCM` still appears to inherit the same gray-biased local scoring problem, plus its own mode constraints
+
+CODEX: Next recommended experiment: raise `CHROMA_ERROR_WEIGHT` modestly (`0.85 -> 1.0 -> 1.1`) and retest Standard/MCM before doing more ECM-specific tuning.
+
+---
+
 ## 1. Preprocessing Pipeline
 
 | Feature | Status | Location | Notes |
@@ -14,6 +38,8 @@ Main implementation: `src/utils/importers/imageConverter.ts` (~2316 lines)
 | OKLAB conversion + stay throughout | **DONE** | imageConverter.ts:48-105 | `sRGBtoOklab()`, correct matrices, never back to RGB until output |
 | Per-cell mean luminance (L, a, b) | **DONE** | imageConverter.ts:530-750 | `meanL`, `meanA`, `meanB` per cell |
 | Per-cell variance | **DONE** | imageConverter.ts:376 | `variances` Float64Array, cells ranked |
+
+CODEX: Note: current ECM/MCM global color search now uses a chroma-aware importance signal rather than pure luminance-variance ranking alone, but this has only modestly improved ECM and has not materially fixed Standard/MCM color fidelity.
 | Dominant gradient direction | **MISSING** | — | No per-cell directionality analysis |
 | Detail score (Laplacian) | **MISSING** | — | Research doc notes USM preferred over Laplacian, neither implemented |
 | Perceptual saliency mask | **PARTIAL** | imageConverter.ts:686-698 | Per-pixel deviation-from-mean weighting (`saliencyAlpha=3.0`). No face/edge/focal-point detection |

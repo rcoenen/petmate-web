@@ -1,19 +1,29 @@
 {
   "mode": "ecm",
   "charset": "upper",
-  "backgroundColor": 11,
+  "backgroundColor": 9,
   "ecmBgColors": [
-    11,
+    9,
     15,
     0,
     12
   ],
-  "qualityMeanDeltaE": 0.13303803930098726,
-  "qualityPerCellHash": "44d1623269f2fd3ce06f1fe512046cb8123c84fa93b60a49dfdbc6aacceb5652",
-  "cellMetadataHash": "71f6065dc0a06fe75a65ac9506146032336cc68a0b68ed02ccc4040781aa77d8",
-  "bgIndicesHash": "2f65bdb3044f9662d30c4958681ae34fd69df3a54b4e8d648f540e3d5ef83675",
+  "qualityMeanDeltaE": 0.1307904627774661,
+  "qualityPerCellHash": "1ab94bdf12a549f1cbafbad43330c297fa7cc10b28b06533ff03b130e5c76304",
+  "cellMetadataHash": "bf3e8a1306e7b987ca48a6281531c966114107109df1789305efe9062660209f",
+  "bgIndicesHash": "3365dbbd38eb7ddbe4c557e36720e779f71f54df13880fa0ada884045909ba0c",
   "mcmSharedColors": [],
-  "colorsHash": "d274e72b445a5704dd3a05b8d563582630cc40e704a909af2d8cedced8082236",
-  "screencodesHash": "e564bfce79d5221c9d4ac189db8f871a4842fe03dc9cd170e9774175514b8ee7",
-  "previewHash": "f7fafee3d3c6c4f526d4b1651eae6d223744f0c14fab2f35e7bfe718a73b5766"
+  "colorsHash": "eec18ff6f97155ddf8784bd2e1f1d2f861f513b99b3db148a2cb2281fa96e10b",
+  "screencodesHash": "155fce717ef4ec71f4e0dc8c2f51a084aa0b36042e7b1bec0f1ffc5e5fd31783",
+  "previewHash": "38326b59529b7a5b22ed857f5921af05abd595afc34f09807b375e0976eb454d",
+  "imageQuality": {
+    "lumaRMSE": 0.139137,
+    "chromaRMSE": 0.057534,
+    "meanDeltaE": 0.113174,
+    "ssim": 0.460354,
+    "tileCount": 1000,
+    "worstTileDeltaE": 0.411313,
+    "worstTileIndex": 203,
+    "percentile95DeltaE": 0.233814
+  }
 }

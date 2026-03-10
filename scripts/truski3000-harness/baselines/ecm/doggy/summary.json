@@ -4,16 +4,26 @@
   "backgroundColor": 7,
   "ecmBgColors": [
     7,
-    8,
-    10,
-    9
+    11,
+    12,
+    5
   ],
-  "qualityMeanDeltaE": 0.15131165589511286,
-  "qualityPerCellHash": "dce73afd2793d0e3ee3a37cd8544169b229e07c328ef29561c283a957a9340da",
-  "cellMetadataHash": "3585d41ed1d53f9434543c25d612bdc51d6934dbd87c391c9eae382cfe46d448",
-  "bgIndicesHash": "fa51abedf38537f488366aa1f361207f2a20c070df0a28658bd8571360d25018",
+  "qualityMeanDeltaE": 0.12217672629312161,
+  "qualityPerCellHash": "b58bc77f8631f427ba860280ffbc37fce09098694420972ae955c7326fefef50",
+  "cellMetadataHash": "8feb14624146344a8714aab0451743f3a0b5bf2a429177dc507fce9fa3df8ab8",
+  "bgIndicesHash": "f929ad7bb12edb35c83829e0f7a05c95204bb4c4c823f4bdd26ad44fd8bab01a",
   "mcmSharedColors": [],
-  "colorsHash": "5aea3ff1e44d40ecc21589d5265e764d618001eb1ddd81a993c0172112958638",
-  "screencodesHash": "03414f9f2afbd0514f91bb89b1454c9d445802fceea532183ce36723875acb34",
-  "previewHash": "b92017273bb71fbdfeae639065c8c37225ce3233f7e6e46f8d8531aed35b0a10"
+  "colorsHash": "c5a06e2e104dfb20e8af8be771e1b7290c0641b537b0e38c0ba66192e5218436",
+  "screencodesHash": "7be143f6053f7a1fafbbb8699fcd3c05f048272202890c4180da2d522a4385b5",
+  "previewHash": "53a0d3523b2ace382caab12b96fa2972932106d462bd91b68fe1eef5918c40b8",
+  "imageQuality": {
+    "lumaRMSE": 0.103555,
+    "chromaRMSE": 0.058022,
+    "meanDeltaE": 0.10535,
+    "ssim": 0.515325,
+    "tileCount": 1000,
+    "worstTileDeltaE": 0.255461,
+    "worstTileIndex": 494,
+    "percentile95DeltaE": 0.17268
+  }
 }

@@ -28,6 +28,10 @@ export interface ImageQualityMetrics {
   meanDeltaE: number;
   /** Structural similarity on L channel, 0..1 */
   ssim: number;
+  /** Cell-averaged SSIM — structural similarity at 8×8 cell level, 0..1.
+   *  Captures "looks right from viewing distance" by comparing cell-averaged
+   *  luminance grids (40×25) with a sliding window SSIM. */
+  cellSSIM: number;
   /** Number of 8×8 tiles compared */
   tileCount: number;
   /** Per-tile mean ΔE */
@@ -48,6 +52,7 @@ export interface ImageQualityScores {
   chromaRMSE: number;
   meanDeltaE: number;
   ssim: number;
+  cellSSIM: number;
   tileCount: number;
   worstTileDeltaE: number;
   worstTileIndex: number;
@@ -145,6 +150,79 @@ function computeTileSSIM(
     (muSrc * muSrc + muRef * muRef + SSIM_C1) * (sigmaSrcSq + sigmaRefSq + SSIM_C2);
 
   return numerator / denominator;
+}
+
+/**
+ * Cell-averaged SSIM: averages each 8×8 cell to a single luminance value,
+ * then computes SSIM over the resulting 40×25 grid using a sliding window.
+ * Captures whether the overall brightness layout "looks right from a distance"
+ * without being affected by within-cell character pixel patterns.
+ */
+function computeCellSSIM(
+  srcL: Float64Array,
+  refL: Float64Array,
+  width: number,
+  height: number
+): number {
+  const cellsX = Math.floor(width / TILE_W);
+  const cellsY = Math.floor(height / TILE_H);
+  const cellCount = cellsX * cellsY;
+
+  // Average each 8×8 cell
+  const srcCellL = new Float64Array(cellCount);
+  const refCellL = new Float64Array(cellCount);
+
+  for (let cy = 0; cy < cellsY; cy++) {
+    for (let cx = 0; cx < cellsX; cx++) {
+      let srcSum = 0;
+      let refSum = 0;
+      for (let dy = 0; dy < TILE_H; dy++) {
+        const row = (cy * TILE_H + dy) * width + cx * TILE_W;
+        for (let dx = 0; dx < TILE_W; dx++) {
+          srcSum += srcL[row + dx];
+          refSum += refL[row + dx];
+        }
+      }
+      srcCellL[cy * cellsX + cx] = srcSum / PIXELS_PER_TILE;
+      refCellL[cy * cellsX + cx] = refSum / PIXELS_PER_TILE;
+    }
+  }
+
+  // Sliding-window SSIM over cell grid (3×3 window)
+  const WIN = 3;
+  const WIN_AREA = WIN * WIN;
+  let ssimSum = 0;
+  let count = 0;
+
+  for (let cy = 0; cy <= cellsY - WIN; cy++) {
+    for (let cx = 0; cx <= cellsX - WIN; cx++) {
+      let sumS = 0, sumR = 0, sumSS = 0, sumRR = 0, sumSR = 0;
+      for (let wy = 0; wy < WIN; wy++) {
+        for (let wx = 0; wx < WIN; wx++) {
+          const idx = (cy + wy) * cellsX + (cx + wx);
+          const s = srcCellL[idx];
+          const r = refCellL[idx];
+          sumS += s;
+          sumR += r;
+          sumSS += s * s;
+          sumRR += r * r;
+          sumSR += s * r;
+        }
+      }
+      const muS = sumS / WIN_AREA;
+      const muR = sumR / WIN_AREA;
+      const sigSS = sumSS / WIN_AREA - muS * muS;
+      const sigRR = sumRR / WIN_AREA - muR * muR;
+      const sigSR = sumSR / WIN_AREA - muS * muR;
+
+      const num = (2 * muS * muR + SSIM_C1) * (2 * sigSR + SSIM_C2);
+      const den = (muS * muS + muR * muR + SSIM_C1) * (sigSS + sigRR + SSIM_C2);
+      ssimSum += num / den;
+      count++;
+    }
+  }
+
+  return count > 0 ? ssimSum / count : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +353,7 @@ export function computeQualityMetrics(
   }
 
   const ssim = tileCount > 0 ? ssimSum / tileCount : 0;
+  const cellSSIM = computeCellSSIM(src.L, ref.L, width, height);
 
   // 95th percentile tile ΔE
   const sortedDeltaE = [...tileDeltaE].sort((a, b) => a - b);
@@ -286,6 +365,7 @@ export function computeQualityMetrics(
     chromaRMSE,
     meanDeltaE,
     ssim,
+    cellSSIM,
     tileCount,
     tileDeltaE,
     tileSSIM,
@@ -302,6 +382,7 @@ export function toQualityScores(metrics: ImageQualityMetrics): ImageQualityScore
     chromaRMSE: Number(metrics.chromaRMSE.toFixed(6)),
     meanDeltaE: Number(metrics.meanDeltaE.toFixed(6)),
     ssim: Number(metrics.ssim.toFixed(6)),
+    cellSSIM: Number(metrics.cellSSIM.toFixed(6)),
     tileCount: metrics.tileCount,
     worstTileDeltaE: Number(metrics.worstTileDeltaE.toFixed(6)),
     worstTileIndex: metrics.worstTileIndex,

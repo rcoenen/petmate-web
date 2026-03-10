@@ -528,7 +528,7 @@ function printQualityScores(result) {
     if (!summary?.imageQuality) continue;
     const q = summary.imageQuality;
     console.log(
-      `  ${mode} quality: SSIM=${q.ssim.toFixed(3)} lumaRMSE=${q.lumaRMSE.toFixed(4)} ` +
+      `  ${mode} quality: SSIM=${q.ssim.toFixed(3)} cellSSIM=${(q.cellSSIM ?? 0).toFixed(3)} lumaRMSE=${q.lumaRMSE.toFixed(4)} ` +
       `chromaRMSE=${q.chromaRMSE.toFixed(4)} meanDeltaE=${q.meanDeltaE.toFixed(4)} ` +
       `p95DeltaE=${q.percentile95DeltaE.toFixed(4)}`
     );
@@ -754,6 +754,7 @@ async function generateComparisonHtml(scenarios) {
       const q = summary.imageQuality;
       if (q) {
         s += '<tr><td class="cl">SSIM</td><td>' + q.ssim.toFixed(3) + '</td></tr>';
+        s += '<tr><td class="cl">cellSSIM</td><td>' + (q.cellSSIM ?? 0).toFixed(3) + '</td></tr>';
         s += '<tr><td class="cl">lumaRMSE</td><td>' + q.lumaRMSE.toFixed(4) + '</td></tr>';
         s += '<tr><td class="cl">chromaRMSE</td><td>' + q.chromaRMSE.toFixed(4) + '</td></tr>';
         s += '<tr><td class="cl">meanDeltaE</td><td>' + q.meanDeltaE.toFixed(4) + '</td></tr>';
@@ -780,6 +781,7 @@ async function generateComparisonHtml(scenarios) {
       html += '<div class="metrics"><h3>Delta</h3><table>';
       html += '<tr><th></th><th>Baseline</th><th>Latest</th><th>Change</th></tr>';
       html += metricRow('SSIM', lq.ssim, bq.ssim, 3, false);
+      html += metricRow('cellSSIM', lq.cellSSIM ?? 0, bq.cellSSIM ?? 0, 3, false);
       html += metricRow('lumaRMSE', lq.lumaRMSE, bq.lumaRMSE, 4, true);
       html += metricRow('chromaRMSE', lq.chromaRMSE, bq.chromaRMSE, 4, true);
       html += metricRow('meanDeltaE', lq.meanDeltaE, bq.meanDeltaE, 4, true);
@@ -881,6 +883,7 @@ async function compareAgainstBaselines() {
             const lq = latestSummary.imageQuality;
             const bq = baselineSummary.imageQuality;
             const ssimDelta = lq.ssim - bq.ssim;
+            const cellSSIMDelta = (lq.cellSSIM ?? 0) - (bq.cellSSIM ?? 0);
             const chromaDelta = lq.chromaRMSE - bq.chromaRMSE;
             const lumaDelta = lq.lumaRMSE - bq.lumaRMSE;
             const changed = !latestSummaryBuf.equals(baselineSummaryBuf);
@@ -888,6 +891,7 @@ async function compareAgainstBaselines() {
             console.log(
               `  ${mode}/${fixtureName} [${tag}]: ` +
               `SSIM ${bq.ssim.toFixed(3)}->${lq.ssim.toFixed(3)} (${formatDelta(ssimDelta)}) ` +
+              `cellSSIM ${(bq.cellSSIM ?? 0).toFixed(3)}->${(lq.cellSSIM ?? 0).toFixed(3)} (${formatDelta(cellSSIMDelta)}) ` +
               `chromaRMSE ${bq.chromaRMSE.toFixed(4)}->${lq.chromaRMSE.toFixed(4)} (${formatDelta(chromaDelta)}) ` +
               `lumaRMSE ${bq.lumaRMSE.toFixed(4)}->${lq.lumaRMSE.toFixed(4)} (${formatDelta(lumaDelta)})`
             );

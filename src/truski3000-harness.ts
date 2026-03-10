@@ -26,6 +26,12 @@ import {
   packMcmThresholdMasks,
 } from './utils/importers/imageConverterBitPacking';
 import { getSystemFontData, getSystemFontDataLower, loadAssets } from './utils/assetLoader';
+import {
+  computeQualityMetrics,
+  downscaleToReference,
+  toQualityScores,
+  type ImageQualityScores,
+} from './utils/importers/imageConverterQualityMetrics';
 
 type HarnessMode = 'standard' | 'ecm' | 'mcm';
 
@@ -48,6 +54,17 @@ type HarnessModeSummary = {
   colorsHash: string;
   screencodesHash: string;
   previewHash: string;
+  imageQuality: ImageQualityScores;
+  screencodeHistogram: number[];
+  uniqueScreencodes: number;
+  perCellDetail: number[];
+  perCellTileDeltaE: number[];
+  perCellTileSSIM: number[];
+  perCellColorDiag: Array<{
+    fg: number; bg: number; screencode: number;
+    idealC1: number; idealC2: number;
+    idealErr: number; chosenErr: number;
+  }>;
 };
 
 type HarnessRunResult = {
@@ -143,15 +160,27 @@ async function imageDataToPngDataUrl(imageData: ImageData): Promise<string> {
   return canvas.toDataURL('image/png');
 }
 
+function buildScreencodeHistogram(screencodes: number[]): number[] {
+  const hist = new Array(256).fill(0);
+  for (const sc of screencodes) hist[sc]++;
+  return hist;
+}
+
+function countUniqueScreencodes(screencodes: number[]): number {
+  return new Set(screencodes).size;
+}
+
 async function summarizeMode(
   mode: HarnessMode,
   result: ConversionResult,
-  preview: ImageData
+  preview: ImageData,
+  sourceReference: ImageData
 ): Promise<{ summary: HarnessModeSummary; previewPngDataUrl: string }> {
   if (!result.qualityMetric || !result.cellMetadata) {
     throw new Error(`Missing Phase 4 diagnostics for ${mode}`);
   }
   const previewPngDataUrl = await imageDataToPngDataUrl(preview);
+  const qualityMetrics = computeQualityMetrics(sourceReference, preview);
   return {
     summary: {
       mode,
@@ -166,6 +195,17 @@ async function summarizeMode(
       colorsHash: await hashBytes(result.colors),
       screencodesHash: await hashBytes(result.screencodes),
       previewHash: await hashBytes(preview.data),
+      imageQuality: toQualityScores(qualityMetrics),
+      screencodeHistogram: buildScreencodeHistogram(result.screencodes),
+      uniqueScreencodes: countUniqueScreencodes(result.screencodes),
+      perCellDetail: result.cellMetadata!.map(c => c.detailScore),
+      perCellTileDeltaE: qualityMetrics.tileDeltaE,
+      perCellTileSSIM: qualityMetrics.tileSSIM,
+      perCellColorDiag: result.cellMetadata!.map(c => ({
+        fg: c.fgColor, bg: c.bgColor, screencode: c.screencode ?? 0,
+        idealC1: c.idealColor1 ?? 0, idealC2: c.idealColor2 ?? 0,
+        idealErr: c.idealError ?? 0, chosenErr: c.chosenError ?? 0,
+      })),
     },
     previewPngDataUrl,
   };
@@ -490,6 +530,13 @@ async function runFixture(request: HarnessRunRequest): Promise<HarnessRunResult>
   const previews: Partial<Record<HarnessMode, string>> = {};
   const backendByMode: Partial<Record<HarnessMode, ConversionResult['accelerationBackend']>> = {};
 
+  // Downscale source image to preview resolution for quality comparison.
+  // Use the first available preview to determine target dimensions.
+  const firstPreview = outputs.previewStd ?? outputs.previewEcm ?? outputs.previewMcm;
+  const sourceReference = firstPreview
+    ? downscaleToReference(image, firstPreview.width, firstPreview.height)
+    : null;
+
   const modeEntries: Array<[HarnessMode, ConversionResult | undefined, ImageData | undefined]> = [
     ['standard', outputs.standard, outputs.previewStd],
     ['ecm', outputs.ecm, outputs.previewEcm],
@@ -497,9 +544,9 @@ async function runFixture(request: HarnessRunRequest): Promise<HarnessRunResult>
   ];
 
   for (const [mode, result, preview] of modeEntries) {
-    if (!result || !preview) continue;
+    if (!result || !preview || !sourceReference) continue;
     backendByMode[mode] = result.accelerationBackend;
-    const summarized = await summarizeMode(mode, result, preview);
+    const summarized = await summarizeMode(mode, result, preview, sourceReference);
     summaries[mode] = summarized.summary;
     previews[mode] = summarized.previewPngDataUrl;
   }

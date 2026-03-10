@@ -6,7 +6,7 @@ import {
 const TYPOGRAPHIC_CODE_MASK = buildTypographicCodeMask();
 
 export const MIN_PAIR_DIFF_RATIO = 0.16;
-export const CHROMA_BONUS_WEIGHT = 10.0;
+export const CHROMA_BONUS_WEIGHT = 0;
 export const EDGE_ALIGNMENT_DETAIL_THRESHOLD = 0.45;
 export const EDGE_ALIGNMENT_WEIGHT = 14.0;
 

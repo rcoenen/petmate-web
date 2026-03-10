@@ -17,6 +17,7 @@ import {
   computeBinaryHammingDistancesJs,
   packBinaryGlyphBitplanes,
   packBinaryThresholdMap,
+  popcount32,
 } from './imageConverterBitPacking';
 import { computeCellStructureMetrics, type CellGradientDirection } from './imageConverterCellMetrics';
 import { buildGlyphAtlasMetadata, type GlyphAtlasMetadata } from './glyphAtlas';
@@ -34,8 +35,22 @@ const STANDARD_SAMPLE_COUNT = 160;
 const STANDARD_FINALIST_COUNT = 8;
 const STANDARD_POOL_SIZE = 10;
 const SCREEN_SOLVE_PASSES = 7;
-const LUMA_ERROR_WEIGHT = 1.55;
-const CHROMA_ERROR_WEIGHT = 0.85;
+const LUMA_ERROR_WEIGHT = 1.0;
+const CHROMA_ERROR_WEIGHT = 2.0;
+// TRUSKI3000: Edge-weighted scoring — penalize character mismatches at edge pixels
+// more heavily than flat-zone mismatches.
+const EDGE_MISMATCH_WEIGHT = 0.0; // TRUSKI3000: disabled pending color-selection fixes; see edge-weight experiment notes
+// TRUSKI3000: Perceptual blend bonus — rewards high-frequency characters (checkerboards,
+// dithers) when their fg+bg blend matches the source cell color. The eye blends alternating
+// pixels spatially, so a brown/black checkerboard looks like dark-brown even though each
+// pixel is "wrong". Scale bonus by character spatialFrequency so solid blocks get no bonus.
+// The blend quality reduces the CSF penalty: when a high-frequency glyph's blend matches
+// the source well, its spatial frequency is the mechanism for correct perceived color, not
+// unwanted noise. BLEND_CSF_RELIEF controls how much blend quality offsets the CSF penalty
+// (1.0 = perfect blend fully cancels CSF; >1.0 = perfect blend creates a net bonus).
+const BLEND_CSF_RELIEF = 1.5;
+// Controls how quickly blend quality decays with blend error. Higher = stricter match required.
+const BLEND_QUALITY_SHARPNESS = 48.0;
 const REPEAT_PENALTY = 28.0;
 const CONTINUITY_PENALTY = 0.14;
 const MODE_SWITCH_PENALTY = 10.0;
@@ -115,6 +130,9 @@ interface SourceCellData {
   saliencyWeight: number;
   detailScore: number;
   gradientDirection: CellGradientDirection;
+  edgeMaskLo: number;
+  edgeMaskHi: number;
+  edgePixelCount: number;
 }
 
 interface SourceAnalysis {
@@ -155,6 +173,7 @@ type BinaryCellScoringTables = {
   pairAdjustment: Float64Array;
   brightnessResidual: Float32Array;
   csfPenaltyByChar: Float32Array;
+  blendMatchBonus: Float64Array; // per mixIndex: blend quality [0,1] — 1 = perfect match
 };
 
 export interface StandardSolvedModeCandidate {
@@ -493,6 +512,48 @@ export function analyzeAlignedSourceImage(
         }
       }
 
+      // Compute per-pixel edge importance via Sobel magnitude, pack into bitmask
+      let edgeMaskLo = 0;
+      let edgeMaskHi = 0;
+      let edgePixelCount = 0;
+      {
+        const sobelMag = new Float32Array(PIXELS_PER_CELL);
+        let maxMag = 0;
+        for (let py = 0; py < 8; py++) {
+          for (let px = 0; px < 8; px++) {
+            const p = py * 8 + px;
+            const x = cx * 8 + px;
+            const y = cy * 8 + py;
+            const idx = y * CANVAS_WIDTH + x;
+            const lC = srcL[idx];
+            const lN = py > 0 ? srcL[idx - CANVAS_WIDTH] : lC;
+            const lS = py < 7 ? srcL[idx + CANVAS_WIDTH] : lC;
+            const lW = px > 0 ? srcL[idx - 1] : lC;
+            const lE = px < 7 ? srcL[idx + 1] : lC;
+            const gx = lE - lW;
+            const gy = lS - lN;
+            const mag = Math.sqrt(gx * gx + gy * gy);
+            sobelMag[p] = mag;
+            if (mag > maxMag) maxMag = mag;
+          }
+        }
+        if (maxMag > 0) {
+          const edgeThreshold = maxMag * 0.3;
+          for (let p = 0; p < 64; p++) {
+            if (sobelMag[p] >= edgeThreshold) {
+              edgePixelCount++;
+              if (p < 32) {
+                edgeMaskLo |= 1 << p;
+              } else {
+                edgeMaskHi |= 1 << (p - 32);
+              }
+            }
+          }
+        }
+      }
+      edgeMaskLo = edgeMaskLo >>> 0;
+      edgeMaskHi = edgeMaskHi >>> 0;
+
       cells[cellIndex] = {
         weightedPixelErrors,
         totalErrByColor,
@@ -502,6 +563,9 @@ export function analyzeAlignedSourceImage(
         saliencyWeight: saliencyTotal / PIXELS_PER_CELL,
         detailScore: structureMetrics.detailScores[cellIndex],
         gradientDirection: structureMetrics.gradientDirections[cellIndex] as CellGradientDirection,
+        edgeMaskLo,
+        edgeMaskHi,
+        edgePixelCount,
       };
     }
   }
@@ -651,6 +715,7 @@ const _reusableBinaryHamming = new Uint8Array(256);
 const _reusableBinaryPairAdjustment = new Float64Array((PIXELS_PER_CELL + 1) * 16 * 16);
 const _reusableBinaryBrightnessResidual = new Float32Array((PIXELS_PER_CELL + 1) * 16 * 16);
 const _reusableBinaryCsfPenalty = new Float32Array(256);
+const _reusableBlendMatchBonus = new Float64Array((PIXELS_PER_CELL + 1) * 16 * 16);
 const _candidateScreencodeCache = new Map<string, Uint16Array>();
 const _foregroundCandidateCache = new WeakMap<PaletteMetricData, Map<number, Uint8Array[]>>();
 
@@ -762,6 +827,16 @@ function buildBinaryCellScoringTables(
             metrics.binaryMixA[index],
             metrics.binaryMixB[index]
           );
+
+        // TRUSKI3000: Blend match quality — how close is the perceptual blend
+        // of this setCount/bg/fg combo to the source cell's average color?
+        // Stored as quality in [0,1]: 1 = perfect match, 0 = poor match.
+        // Used to reduce CSF penalty for high-frequency characters whose blend is correct.
+        const dL = cell.avgL - metrics.binaryMixL[index];
+        const dA = cell.avgA - metrics.binaryMixA[index];
+        const dB = cell.avgB - metrics.binaryMixB[index];
+        const blendError = dL * dL + dA * dA + dB * dB;
+        _reusableBlendMatchBonus[index] = 1 / (1 + blendError * BLEND_QUALITY_SHARPNESS);
       }
     }
   }
@@ -770,6 +845,7 @@ function buildBinaryCellScoringTables(
     pairAdjustment: _reusableBinaryPairAdjustment,
     brightnessResidual: _reusableBinaryBrightnessResidual,
     csfPenaltyByChar: _reusableBinaryCsfPenalty,
+    blendMatchBonus: _reusableBlendMatchBonus,
   };
 }
 
@@ -878,6 +954,13 @@ function buildBinaryCandidatePoolsForCell(
   const foregroundsByBackground = getForegroundCandidatesByBackground(metrics);
   const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings);
 
+  // Scale edge penalty by cell detail — flat cells (detailScore ~0) get no edge penalty,
+  // high-detail cells get full penalty. This prevents degrading flat-zone color matching.
+  const edgeWeight = EDGE_MISMATCH_WEIGHT * cell.detailScore;
+  const hasEdges = cell.edgePixelCount > 0 && edgeWeight > 0.01;
+  const eMaskLo = cell.edgeMaskLo;
+  const eMaskHi = cell.edgeMaskHi;
+
   if (canUseBinaryHammingPath(settings, scoringKernel)) {
     for (let bi = 0; bi < backgrounds.length; bi++) {
       const bg = backgrounds[bi];
@@ -886,10 +969,36 @@ function buildBinaryCandidatePoolsForCell(
       for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
         const fg = foregrounds[fgIndex];
         const hammingDistances = computeBinaryHammingDistances(cell, fg, bg, context, metrics, scoringKernel);
+
+        let thresholdLo = 0, thresholdHi = 0;
+        if (hasEdges) {
+          [thresholdLo, thresholdHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+        }
+
         for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
           const ch = candidateScreencodes[charIndex];
           const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
-          const total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex];
+          let total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex];
+
+          if (hasEdges) {
+            const mismatchLo = (context.packedBinaryGlyphLo[ch] ^ thresholdLo) >>> 0;
+            const mismatchHi = (context.packedBinaryGlyphHi[ch] ^ thresholdHi) >>> 0;
+            const edgeMismatches =
+              popcount32((mismatchLo & eMaskLo) >>> 0) +
+              popcount32((mismatchHi & eMaskHi) >>> 0);
+            total += edgeWeight * edgeMismatches;
+          }
+
+          // TRUSKI3000: Net CSF/blend term — blend quality reduces the CSF penalty.
+          // When a high-frequency glyph's blend matches the source, its spatial
+          // frequency is the mechanism for correct perceived color, not noise.
+          const sf = context.glyphAtlas.spatialFrequency[ch];
+          if (sf > 0.1) {
+            const blendQuality = scoringTables.blendMatchBonus[mixIndex];
+            const csfBase = settings.csfWeight * sf * Math.max(0, 1 - cell.detailScore);
+            total += csfBase * (1 - BLEND_CSF_RELIEF * blendQuality);
+          }
+
           if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
             insertTopCandidate(
               pool,
@@ -937,7 +1046,12 @@ function buildBinaryCandidatePoolsForCell(
     const ch = candidateScreencodes[charIndex];
     const rowBase = ch * 16;
     const nSet = context.refSetCount[ch];
-    const csfPenalty = scoringTables.csfPenaltyByChar[ch];
+    const sfCh = context.glyphAtlas.spatialFrequency[ch];
+    // For low-frequency characters (solid blocks, quarter-fills), use the precomputed
+    // CSF penalty directly. For high-frequency characters, compute the net CSF/blend
+    // term inline so that blend quality can reduce or negate the penalty.
+    const csfPenalty = sfCh <= 0.1 ? scoringTables.csfPenaltyByChar[ch] : 0;
+    const csfBase = sfCh > 0.1 ? settings.csfWeight * sfCh * Math.max(0, 1 - cell.detailScore) : 0;
 
     for (let bi = 0; bi < backgrounds.length; bi++) {
       const bg = backgrounds[bi];
@@ -950,11 +1064,31 @@ function buildBinaryCandidatePoolsForCell(
       for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
         const fg = foregrounds[fgIndex];
         const mixIndex = binaryMixIndex(nSet, bg, fg);
-        const total =
+        let total =
           bgErr +
           setErrMatrix[rowBase + fg] +
           csfPenalty +
           scoringTables.pairAdjustment[mixIndex];
+
+        // TRUSKI3000: Edge-weighted penalty for set-error path
+        if (hasEdges) {
+          const [tLo, tHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+          const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
+          const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
+          const edgeMismatches =
+            popcount32((mLo & eMaskLo) >>> 0) +
+            popcount32((mHi & eMaskHi) >>> 0);
+          total += edgeWeight * edgeMismatches;
+        }
+
+        // TRUSKI3000: Net CSF/blend term for set-error path — blend quality
+        // reduces the CSF penalty so dithering characters can win when their
+        // perceptual blend matches the source color.
+        if (sfCh > 0.1) {
+          const blendQuality = scoringTables.blendMatchBonus[mixIndex];
+          total += csfBase * (1 - BLEND_CSF_RELIEF * blendQuality);
+        }
+
         if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
           insertTopCandidate(
             pool,

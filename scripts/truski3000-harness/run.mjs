@@ -40,6 +40,12 @@ const presetFilterIndex = process.argv.indexOf('--preset');
 const presetFilter = presetFilterIndex >= 0 ? process.argv[presetFilterIndex + 1] ?? null : null;
 const accelerationFilterIndex = process.argv.indexOf('--acceleration');
 const accelerationFilter = accelerationFilterIndex >= 0 ? process.argv[accelerationFilterIndex + 1] ?? null : null;
+const saliencyFlagIndex = process.argv.indexOf('--saliency');
+const saliencyOverride = saliencyFlagIndex >= 0 ? parseFloat(process.argv[saliencyFlagIndex + 1] ?? 'NaN') : null;
+const lumFlagIndex = process.argv.indexOf('--lum');
+const lumOverride = lumFlagIndex >= 0 ? parseFloat(process.argv[lumFlagIndex + 1] ?? 'NaN') : null;
+const csfFlagIndex = process.argv.indexOf('--csf');
+const csfOverride = csfFlagIndex >= 0 ? parseFloat(process.argv[csfFlagIndex + 1] ?? 'NaN') : null;
 const maxMsFlagIndex = process.argv.indexOf('--max-ms');
 const scenarioTimeoutMs = maxMsFlagIndex >= 0
   ? Math.max(0, Number.parseInt(process.argv[maxMsFlagIndex + 1] ?? '180000', 10) || 180000)
@@ -505,6 +511,321 @@ async function runBackendParity(page, scenarios) {
   console.log(`TRUSKI3000 harness parity passed. JSON written to ${parityOutputPath}`);
 }
 
+function printQualityScores(result) {
+  for (const [mode, summary] of Object.entries(result.summaries)) {
+    if (!summary?.imageQuality) continue;
+    const q = summary.imageQuality;
+    console.log(
+      `  ${mode} quality: SSIM=${q.ssim.toFixed(3)} lumaRMSE=${q.lumaRMSE.toFixed(4)} ` +
+      `chromaRMSE=${q.chromaRMSE.toFixed(4)} meanDeltaE=${q.meanDeltaE.toFixed(4)} ` +
+      `p95DeltaE=${q.percentile95DeltaE.toFixed(4)}`
+    );
+  }
+}
+
+function printCharacterUtilization(result) {
+  for (const [mode, summary] of Object.entries(result.summaries)) {
+    if (!summary?.screencodeHistogram) continue;
+    const hist = summary.screencodeHistogram;
+    const unique = summary.uniqueScreencodes;
+    const total = hist.reduce((a, b) => a + b, 0);
+
+    // Top 20 most-used characters
+    const ranked = hist
+      .map((count, sc) => ({ sc, count }))
+      .filter(e => e.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+    const top20 = ranked.slice(0, 20);
+    const top20Total = top20.reduce((a, e) => a + e.count, 0);
+
+    // Distribution buckets
+    const usedOnce = ranked.filter(e => e.count === 1).length;
+    const used2to5 = ranked.filter(e => e.count >= 2 && e.count <= 5).length;
+    const used6to20 = ranked.filter(e => e.count >= 6 && e.count <= 20).length;
+    const usedOver20 = ranked.filter(e => e.count > 20).length;
+
+    console.log(`  ${mode} character utilization: ${unique}/256 unique (${(unique / 256 * 100).toFixed(0)}%)`);
+    console.log(`    Top 20 cover ${top20Total}/${total} cells (${(top20Total / total * 100).toFixed(0)}%):`);
+    console.log(`      ${top20.map(e => 'sc' + e.sc + ':' + e.count).join(' ')}`);
+    console.log(`    Distribution: ${usedOver20} chars>20× | ${used6to20} chars 6-20× | ${used2to5} chars 2-5× | ${usedOnce} chars 1×`);
+
+    // Cross-reference: detail vs quality per cell
+    if (summary.perCellDetail && summary.perCellTileDeltaE) {
+      const detail = summary.perCellDetail;
+      const deltaE = summary.perCellTileDeltaE;
+      const ssim = summary.perCellTileSSIM || [];
+      const screencodes = summary.screencodeHistogram; // need raw screencodes, not hist
+
+      // Classify cells by detail level
+      const detailThreshold = 0.3; // cells with meaningful structure
+      const highDetail = [];
+      const lowDetail = [];
+      for (let i = 0; i < detail.length; i++) {
+        const entry = { cell: i, detail: detail[i], deltaE: deltaE[i], ssim: ssim[i] || 0 };
+        if (detail[i] >= detailThreshold) highDetail.push(entry);
+        else lowDetail.push(entry);
+      }
+
+      const avgDeltaEHigh = highDetail.length > 0
+        ? highDetail.reduce((a, e) => a + e.deltaE, 0) / highDetail.length : 0;
+      const avgDeltaELow = lowDetail.length > 0
+        ? lowDetail.reduce((a, e) => a + e.deltaE, 0) / lowDetail.length : 0;
+      const avgSSIMHigh = highDetail.length > 0
+        ? highDetail.reduce((a, e) => a + e.ssim, 0) / highDetail.length : 0;
+      const avgSSIMLow = lowDetail.length > 0
+        ? lowDetail.reduce((a, e) => a + e.ssim, 0) / lowDetail.length : 0;
+
+      // Worst high-detail cells (high detail + high error = bad character choice)
+      const worstDetailCells = highDetail
+        .sort((a, b) => b.deltaE - a.deltaE)
+        .slice(0, 10);
+
+      console.log(`    Detail split (threshold=${detailThreshold}):`);
+      console.log(`      High-detail cells: ${highDetail.length} — avgDeltaE=${avgDeltaEHigh.toFixed(4)} avgSSIM=${avgSSIMHigh.toFixed(3)}`);
+      console.log(`      Low-detail cells:  ${lowDetail.length} — avgDeltaE=${avgDeltaELow.toFixed(4)} avgSSIM=${avgSSIMLow.toFixed(3)}`);
+      if (worstDetailCells.length > 0) {
+        console.log(`      Worst high-detail cells (detail>=0.3, sorted by error):`);
+        const cellDescs = worstDetailCells.map(e => {
+          const cx = e.cell % 40;
+          const cy = Math.floor(e.cell / 40);
+          return '        [' + cx + ',' + cy + '] detail=' + e.detail.toFixed(2) + ' deltaE=' + e.deltaE.toFixed(4) + ' ssim=' + e.ssim.toFixed(3);
+        });
+        console.log(cellDescs.join('\n'));
+      }
+    }
+
+    // Color diagnostics: cells where chosen pair diverges from ideal
+    if (summary.perCellColorDiag) {
+      const diag = summary.perCellColorDiag;
+      const C64_COLOR_NAMES = [
+        'black', 'white', 'red', 'cyan', 'purple', 'green',
+        'blue', 'yellow', 'orange', 'brown', 'pink', 'dgray',
+        'mgray', 'lgreen', 'lblue', 'lgray'
+      ];
+      const cn = (c) => C64_COLOR_NAMES[c] || String(c);
+
+      // Find cells with biggest gap between ideal and chosen error
+      const colorGaps = diag.map((d, i) => ({
+        cell: i,
+        gap: d.chosenErr - d.idealErr,
+        chosen: [d.bg, d.fg],
+        ideal: [d.idealC1, d.idealC2],
+        chosenErr: d.chosenErr,
+        idealErr: d.idealErr,
+        detail: (summary.perCellDetail && summary.perCellDetail[i]) || 0,
+      }));
+
+      // Overall stats
+      const totalGap = colorGaps.reduce((a, e) => a + e.gap, 0);
+      const cellsWithGap = colorGaps.filter(e => e.gap > 0.01).length;
+      const avgGap = cellsWithGap > 0 ? totalGap / cellsWithGap : 0;
+
+      // Cells where ideal != chosen (sorted by gap)
+      const worstColorCells = colorGaps
+        .filter(e => e.gap > 0.01)
+        .sort((a, b) => b.gap - a.gap)
+        .slice(0, 10);
+
+      console.log(`    Color pair diagnostics: ${cellsWithGap}/1000 cells chose non-ideal pair (avgGap=${avgGap.toFixed(2)})`);
+      if (worstColorCells.length > 0) {
+        console.log('      Worst color-pair gaps (ideal vs chosen):');
+        for (const e of worstColorCells) {
+          const cx = e.cell % 40;
+          const cy = Math.floor(e.cell / 40);
+          const idealStr = cn(e.ideal[0]) + '+' + cn(e.ideal[1]);
+          const chosenStr = cn(e.chosen[0]) + '+' + cn(e.chosen[1]);
+          console.log(
+            '        [' + cx + ',' + cy + '] ideal=' + idealStr +
+            '(' + e.idealErr.toFixed(1) + ') chosen=' + chosenStr +
+            '(' + e.chosenErr.toFixed(1) + ') gap=' + e.gap.toFixed(1) +
+            ' detail=' + e.detail.toFixed(2)
+          );
+        }
+      }
+
+      // Aggregate: which ideal colors are most often lost?
+      const idealColorFreq = new Array(16).fill(0);
+      const chosenColorFreq = new Array(16).fill(0);
+      for (const d of diag) {
+        idealColorFreq[d.idealC1]++;
+        idealColorFreq[d.idealC2]++;
+        chosenColorFreq[d.bg]++;
+        chosenColorFreq[d.fg]++;
+      }
+      const lostColors = [];
+      for (let c = 0; c < 16; c++) {
+        const diff = idealColorFreq[c] - chosenColorFreq[c];
+        if (diff > 10) lostColors.push({ color: c, name: cn(c), idealCount: idealColorFreq[c], chosenCount: chosenColorFreq[c], lost: diff });
+      }
+      if (lostColors.length > 0) {
+        lostColors.sort((a, b) => b.lost - a.lost);
+        console.log('      Colors underused vs ideal:');
+        for (const lc of lostColors) {
+          console.log('        ' + lc.name + ': ideal=' + lc.idealCount + ' chosen=' + lc.chosenCount + ' (lost ' + lc.lost + ' cells)');
+        }
+      }
+      const gainedColors = [];
+      for (let c = 0; c < 16; c++) {
+        const diff = chosenColorFreq[c] - idealColorFreq[c];
+        if (diff > 10) gainedColors.push({ color: c, name: cn(c), idealCount: idealColorFreq[c], chosenCount: chosenColorFreq[c], gained: diff });
+      }
+      if (gainedColors.length > 0) {
+        gainedColors.sort((a, b) => b.gained - a.gained);
+        console.log('      Colors overused vs ideal:');
+        for (const gc of gainedColors) {
+          console.log('        ' + gc.name + ': ideal=' + gc.idealCount + ' chosen=' + gc.chosenCount + ' (gained ' + gc.gained + ' cells)');
+        }
+      }
+    }
+  }
+}
+
+function formatDelta(value) {
+  return value >= 0 ? `+${value.toFixed(4)}` : value.toFixed(4);
+}
+
+async function generateComparisonHtml(scenarios) {
+  const reportPath = path.resolve(outputRoot, 'comparison.html');
+  const rows = [];
+
+  for (const scenario of scenarios) {
+    const fixtureName = path.parse(scenario.fixture).name;
+    const mode = scenario.mode;
+    const latestSummaryPath = path.resolve(latestOutputDir, mode, fixtureName, 'summary.json');
+    const baselineSummaryPath = path.resolve(baselineDir, mode, fixtureName, 'summary.json');
+
+    let latest = null;
+    let baseline = null;
+    try { latest = JSON.parse(await readFile(latestSummaryPath, 'utf8')); } catch {}
+    try { baseline = JSON.parse(await readFile(baselineSummaryPath, 'utf8')); } catch {}
+
+    rows.push({ fixture: scenario.fixture, fixtureName, mode, latest, baseline });
+  }
+
+  function metricDelta(val, base, lowerBetter) {
+    if (base == null || val == null) return '';
+    const d = val - base;
+    if (Math.abs(d) < 0.00005) return '<span class="neutral">(=)</span>';
+    const good = lowerBetter ? d < 0 : d > 0;
+    const sign = d > 0 ? '+' : '';
+    const cls = good ? 'better' : 'worse';
+    return '<span class="' + cls + '">(' + sign + d.toFixed(4) + ')</span>';
+  }
+
+  function metricRow(name, latestVal, baseVal, decimals, lowerBetter) {
+    const bStr = baseVal != null ? baseVal.toFixed(decimals) : '—';
+    const lStr = latestVal != null ? latestVal.toFixed(decimals) : '—';
+    return '<tr><td>' + name + '</td><td>' + bStr + '</td><td>' + lStr + '</td><td>' + metricDelta(latestVal, baseVal, lowerBetter) + '</td></tr>';
+  }
+
+  function renderScenario(row) {
+    const lq = row.latest ? row.latest.imageQuality : null;
+    const bq = row.baseline ? row.baseline.imageQuality : null;
+    const fixtureSrc = '../fixtures/' + row.fixture;
+    const baselineSrc = '../baselines/' + row.mode + '/' + row.fixtureName + '/preview.png';
+    const latestSrc = 'latest/' + row.mode + '/' + row.fixtureName + '/preview.png';
+
+    function summaryInfo(summary, label) {
+      if (!summary) return '';
+      let s = '<div class="card-info">';
+      s += '<div class="card-label">' + label + '</div>';
+      s += '<table class="card-table">';
+      s += '<tr><td class="cl">bg</td><td>' + summary.backgroundColor + '</td></tr>';
+      s += '<tr><td class="cl">charset</td><td>' + summary.charset + '</td></tr>';
+      if (summary.ecmBgColors && summary.ecmBgColors.length > 0) {
+        s += '<tr><td class="cl">ecm bgs</td><td>[' + summary.ecmBgColors.join(', ') + ']</td></tr>';
+      }
+      if (summary.mcmSharedColors && summary.mcmSharedColors.some(function(c) { return c > 0; })) {
+        s += '<tr><td class="cl">mcm shared</td><td>[' + summary.mcmSharedColors.join(', ') + ']</td></tr>';
+      }
+      const q = summary.imageQuality;
+      if (q) {
+        s += '<tr><td class="cl">SSIM</td><td>' + q.ssim.toFixed(3) + '</td></tr>';
+        s += '<tr><td class="cl">lumaRMSE</td><td>' + q.lumaRMSE.toFixed(4) + '</td></tr>';
+        s += '<tr><td class="cl">chromaRMSE</td><td>' + q.chromaRMSE.toFixed(4) + '</td></tr>';
+        s += '<tr><td class="cl">meanDeltaE</td><td>' + q.meanDeltaE.toFixed(4) + '</td></tr>';
+        s += '<tr><td class="cl">p95DeltaE</td><td>' + q.percentile95DeltaE.toFixed(4) + '</td></tr>';
+      }
+      s += '</table>';
+      s += '</div>';
+      return s;
+    }
+
+    let html = '<div class="scenario">';
+    html += '<h2>' + row.mode + ' / ' + row.fixture + '</h2>';
+    html += '<div class="images">';
+    html += '<div class="img-box"><img src="' + fixtureSrc + '" style="object-fit:cover;" alt="Source"><div class="label">Source</div></div>';
+    if (row.baseline) {
+      html += '<div class="img-box"><img src="' + baselineSrc + '" alt="Baseline">' + summaryInfo(row.baseline, 'Baseline') + '</div>';
+    }
+    if (row.latest) {
+      html += '<div class="img-box"><img src="' + latestSrc + '" alt="Latest">' + summaryInfo(row.latest, 'Latest') + '</div>';
+    }
+    html += '</div>';
+
+    if (lq && bq) {
+      html += '<div class="metrics"><h3>Delta</h3><table>';
+      html += '<tr><th></th><th>Baseline</th><th>Latest</th><th>Change</th></tr>';
+      html += metricRow('SSIM', lq.ssim, bq.ssim, 3, false);
+      html += metricRow('lumaRMSE', lq.lumaRMSE, bq.lumaRMSE, 4, true);
+      html += metricRow('chromaRMSE', lq.chromaRMSE, bq.chromaRMSE, 4, true);
+      html += metricRow('meanDeltaE', lq.meanDeltaE, bq.meanDeltaE, 4, true);
+      html += metricRow('p95DeltaE', lq.percentile95DeltaE, bq.percentile95DeltaE, 4, true);
+      html += '</table></div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  const scenarioHtml = rows.map(renderScenario).join('\n');
+  const timestamp = new Date().toISOString().slice(0, 19);
+
+  const html = [
+    '<!DOCTYPE html>',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="utf-8">',
+    '<title>TRUSKI3000 Comparison</title>',
+    '<style>',
+    '* { margin: 0; padding: 0; box-sizing: border-box; }',
+    'body { background: #1a1a1a; color: #e0e0e0; font-family: system-ui, sans-serif; padding: 24px; }',
+    'h1 { margin-bottom: 4px; font-size: 1.3em; }',
+    '.subtitle { color: #888; margin-bottom: 24px; font-size: 0.85em; }',
+    '.scenario { margin-bottom: 32px; border-bottom: 1px solid #333; padding-bottom: 24px; }',
+    '.scenario h2 { font-size: 1.1em; margin-bottom: 12px; }',
+    '.images { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }',
+    '.img-box { text-align: center; }',
+    '.img-box img { width: 320px; height: 200px; image-rendering: pixelated; border: 1px solid #444; display: block; }',
+    '.img-box .label { font-size: 0.75em; color: #888; margin-top: 4px; }',
+    '.metrics { margin-top: 12px; font-size: 0.8em; font-family: monospace; }',
+    '.metrics table { border-collapse: collapse; }',
+    '.metrics th, .metrics td { padding: 2px 12px 2px 0; text-align: left; }',
+    '.metrics th { color: #888; font-weight: normal; }',
+    '.better { color: #6c6; }',
+    '.worse { color: #c66; }',
+    '.neutral { color: #888; }',
+    '.card-info { font-size: 0.8em; margin-top: 6px; }',
+    '.card-label { font-weight: bold; color: #ccc; margin-bottom: 4px; }',
+    '.card-table { border-collapse: collapse; font-family: monospace; font-size: 0.9em; }',
+    '.card-table td { padding: 1px 8px 1px 0; }',
+    '.card-table .cl { color: #888; }',
+    '.metrics h3 { font-size: 0.9em; margin-bottom: 4px; color: #aaa; }',
+    '</style>',
+    '</head>',
+    '<body>',
+    '<h1>TRUSKI3000 Visual Comparison</h1>',
+    '<p class="subtitle">Generated ' + timestamp + ' | Baseline vs Latest</p>',
+    scenarioHtml,
+    '</body>',
+    '</html>',
+  ].join('\n');
+
+  await writeFile(reportPath, html, 'utf8');
+  console.log('Visual comparison: ' + reportPath);
+}
+
 async function compareAgainstBaselines() {
   const failures = [];
 
@@ -526,18 +847,41 @@ async function compareAgainstBaselines() {
       const baselinePreviewPath = path.resolve(baselineDir, mode, fixtureName, 'preview.png');
 
       try {
-        const [latestSummary, baselineSummary, latestPreview, baselinePreview] = await Promise.all([
+        const [latestSummaryBuf, baselineSummaryBuf, latestPreview, baselinePreview] = await Promise.all([
           readFile(latestSummaryPath),
           readFile(baselineSummaryPath),
           readFile(latestPreviewPath),
           readFile(baselinePreviewPath),
         ]);
 
-        if (!latestSummary.equals(baselineSummary)) {
+        if (!latestSummaryBuf.equals(baselineSummaryBuf)) {
           failures.push(`${mode}/${fixtureName}: summary mismatch`);
         }
         if (!latestPreview.equals(baselinePreview)) {
           failures.push(`${mode}/${fixtureName}: preview mismatch`);
+        }
+
+        // Show quality score changes regardless of pass/fail
+        try {
+          const latestSummary = JSON.parse(latestSummaryBuf.toString('utf8'));
+          const baselineSummary = JSON.parse(baselineSummaryBuf.toString('utf8'));
+          if (latestSummary.imageQuality && baselineSummary.imageQuality) {
+            const lq = latestSummary.imageQuality;
+            const bq = baselineSummary.imageQuality;
+            const ssimDelta = lq.ssim - bq.ssim;
+            const chromaDelta = lq.chromaRMSE - bq.chromaRMSE;
+            const lumaDelta = lq.lumaRMSE - bq.lumaRMSE;
+            const changed = !latestSummaryBuf.equals(baselineSummaryBuf);
+            const tag = changed ? 'CHANGED' : 'OK';
+            console.log(
+              `  ${mode}/${fixtureName} [${tag}]: ` +
+              `SSIM ${bq.ssim.toFixed(3)}->${lq.ssim.toFixed(3)} (${formatDelta(ssimDelta)}) ` +
+              `chromaRMSE ${bq.chromaRMSE.toFixed(4)}->${lq.chromaRMSE.toFixed(4)} (${formatDelta(chromaDelta)}) ` +
+              `lumaRMSE ${bq.lumaRMSE.toFixed(4)}->${lq.lumaRMSE.toFixed(4)} (${formatDelta(lumaDelta)})`
+            );
+          }
+        } catch {
+          // Non-fatal — quality reporting is informational
         }
       } catch (error) {
         failures.push(`${mode}/${fixtureName}: missing baseline (${error instanceof Error ? error.message : String(error)})`);
@@ -643,11 +987,29 @@ async function main() {
     }
 
     for (const scenario of scenarios) {
-      const settings = modeMatrix[scenario.mode];
-      console.log(`Running ${scenario.mode} -> ${scenario.fixture} [${formatRequestedAcceleration()}]`);
+      const settings = { ...modeMatrix[scenario.mode] };
+      if (saliencyOverride !== null && !isNaN(saliencyOverride)) {
+        settings.saliencyAlpha = saliencyOverride;
+      }
+      if (lumOverride !== null && !isNaN(lumOverride)) {
+        settings.lumMatchWeight = lumOverride;
+      }
+      if (csfOverride !== null && !isNaN(csfOverride)) {
+        settings.csfWeight = csfOverride;
+      }
+      const overrideLabel = [
+        saliencyOverride !== null ? `sal=${saliencyOverride}` : '',
+        lumOverride !== null ? `lum=${lumOverride}` : '',
+        csfOverride !== null ? `csf=${csfOverride}` : '',
+      ].filter(Boolean).join(' ');
+      console.log(`Running ${scenario.mode} -> ${scenario.fixture} [${formatRequestedAcceleration()}]${overrideLabel ? ' ' + overrideLabel : ''}`);
       const result = await runHarnessFixture(page, scenario.fixture, settings, accelerationFilter ?? 'auto');
       await writeRunArtifacts(result);
+      printQualityScores(result);
+      printCharacterUtilization(result);
     }
+
+    await generateComparisonHtml(scenarios);
   } finally {
     await browser.close();
     stopHarnessServer();

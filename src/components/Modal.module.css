@@ -10,8 +10,9 @@
 }
 
 .modal {
-  max-height: 80vh;
+  max-height: calc(100vh - 32px);
   overflow-y: auto;
+  overflow-x: hidden;
   margin: 0px 0px 0px 0px;
 
   border-radius: 5px;
@@ -27,7 +28,8 @@
   transform: translate(-50%, -50%);
 
   width: 420px;
-  max-width: 100%;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
 
   padding-top: 10px;
   padding-bottom: 10px;

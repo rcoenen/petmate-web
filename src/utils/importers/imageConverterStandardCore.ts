@@ -12,6 +12,7 @@ import {
   computeHuePreservationBonus,
   hasMinimumContrast,
   isTypographicScreencode,
+  MIN_PAIR_DIFF_RATIO,
 } from './imageConverterHeuristics';
 import {
   computeBinaryHammingDistancesJs,
@@ -51,6 +52,31 @@ const EDGE_MISMATCH_WEIGHT = 0.0; // TRUSKI3000: disabled pending color-selectio
 const BLEND_CSF_RELIEF = 1.5;
 // Controls how quickly blend quality decays with blend error. Higher = stricter match required.
 const BLEND_QUALITY_SHARPNESS = 48.0;
+// Standalone blend match bonus: always active, independent of csfWeight.
+// Rewards pairs whose perceptual blend (fg+bg mix) matches the source cell color.
+// Without this, low-contrast pairs like brown+black can never compete on per-pixel
+// error alone, even though their blend IS the correct perceived color.
+const BLEND_MATCH_WEIGHT = 3.0;
+// Coverage extremity penalty: solid blocks (0% or 100% coverage) get penalized
+// in detailed cells where PETSCII character shapes should be leveraged. Without
+// this, full blocks always win on per-pixel error because they show 100% of one
+// color, but they produce a blocky "pixel art" look instead of textured PETSCII art.
+const COVERAGE_EXTREMITY_WEIGHT = 3.0;
+// TRUSKI3000: Soft contrast penalty — replaces the hard hasMinimumContrast gate.
+// Low-contrast pairs (e.g. brown+black) get a penalty that scales linearly from 0
+// at the threshold to SOFT_CONTRAST_PENALTY at zero contrast. This lets brown compete
+// when it's the best color match, while still preferring higher-contrast alternatives.
+// Controlled low-contrast wildcard system: cells with narrow luminance range
+// get a small number of low-contrast fg candidates alongside the normal pool.
+// This preserves pool ecology for high-contrast cells while giving low-contrast
+// cells the diversity they need.
+// Competitive wildcard admission: low-contrast candidates enter the pool only
+// when they are within a score margin of the best normal candidate, or when
+// their color-match (blend quality) advantage is clearly large. This prevents
+// noise in high-contrast cells while allowing genuine low-contrast diversity.
+const WILDCARD_SCORE_MARGIN = 0.15;        // must score within 15% of best normal
+const WILDCARD_BLEND_QUALITY_MIN = 0.7;    // OR blend quality above this admits directly
+const WILDCARD_MAX_ADMITTED = 2;           // max wildcards admitted per cell/background
 const REPEAT_PENALTY = 28.0;
 const CONTINUITY_PENALTY = 0.14;
 const MODE_SWITCH_PENALTY = 10.0;
@@ -133,6 +159,7 @@ interface SourceCellData {
   edgeMaskLo: number;
   edgeMaskHi: number;
   edgePixelCount: number;
+  lumRange: number; // maxL - minL across cell pixels
 }
 
 interface SourceAnalysis {
@@ -453,17 +480,22 @@ export function analyzeAlignedSourceImage(
       let meanB = 0;
       let lumSum = 0;
       let lumSqSum = 0;
+      let minL = Infinity;
+      let maxL = -Infinity;
 
       for (let py = 0; py < 8; py++) {
         for (let px = 0; px < 8; px++) {
           const p = py * 8 + px;
           const pixelIndex = (cy * 8 + py) * CANVAS_WIDTH + (cx * 8 + px);
           pixelIndices[p] = pixelIndex;
-          meanL += srcL[pixelIndex];
+          const pxL = srcL[pixelIndex];
+          meanL += pxL;
           meanA += srcA[pixelIndex];
           meanB += srcB[pixelIndex];
-          lumSum += srcL[pixelIndex];
-          lumSqSum += srcL[pixelIndex] * srcL[pixelIndex];
+          lumSum += pxL;
+          lumSqSum += pxL * pxL;
+          if (pxL < minL) minL = pxL;
+          if (pxL > maxL) maxL = pxL;
         }
       }
 
@@ -566,6 +598,7 @@ export function analyzeAlignedSourceImage(
         edgeMaskLo,
         edgeMaskHi,
         edgePixelCount,
+        lumRange: maxL - minL,
       };
     }
   }
@@ -819,6 +852,7 @@ function buildBinaryCellScoringTables(
         const index = binaryMixIndex(setCount, bg, fg);
         const lumDiff = cell.avgL - metrics.binaryMixL[index];
         _reusableBinaryBrightnessResidual[index] = lumDiff;
+
         _reusableBinaryPairAdjustment[index] =
           settings.lumMatchWeight * lumDiff * lumDiff -
           computeHuePreservationBonus(
@@ -836,7 +870,11 @@ function buildBinaryCellScoringTables(
         const dA = cell.avgA - metrics.binaryMixA[index];
         const dB = cell.avgB - metrics.binaryMixB[index];
         const blendError = dL * dL + dA * dA + dB * dB;
-        _reusableBlendMatchBonus[index] = 1 / (1 + blendError * BLEND_QUALITY_SHARPNESS);
+        const blendQuality = 1 / (1 + blendError * BLEND_QUALITY_SHARPNESS);
+        _reusableBlendMatchBonus[index] = blendQuality;
+
+        // Standalone blend bonus: good blend match reduces pair error regardless of csfWeight
+        _reusableBinaryPairAdjustment[index] -= BLEND_MATCH_WEIGHT * blendQuality;
       }
     }
   }
@@ -896,6 +934,11 @@ function buildBinaryBestErrorByBackground(
   const foregroundsByBackground = getForegroundCandidatesByBackground(metrics);
   const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings);
 
+  // Coarse-only coverage extremity: penalize extreme coverage in detailed cells
+  // to steer background selection toward backgrounds that enable PETSCII diversity.
+  // This does NOT affect pool building or per-cell solving.
+  const covDetail = COVERAGE_EXTREMITY_WEIGHT * cell.detailScore;
+
   if (canUseBinaryHammingPath(settings, scoringKernel)) {
     for (let bg = 0; bg < 16; bg++) {
       const foregrounds = foregroundsByBackground[bg];
@@ -904,8 +947,11 @@ function buildBinaryBestErrorByBackground(
         const hammingDistances = computeBinaryHammingDistances(cell, fg, bg, context, metrics, scoringKernel);
         for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
           const ch = candidateScreencodes[charIndex];
-          const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
-          const total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex];
+          const nSet = context.refSetCount[ch];
+          const mixIndex = binaryMixIndex(nSet, bg, fg);
+          const covRatio = nSet / PIXELS_PER_CELL;
+          const extremity = (2 * covRatio - 1) * (2 * covRatio - 1);
+          const total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex] + covDetail * extremity;
           if (total < best[bg]) best[bg] = total;
         }
       }
@@ -920,6 +966,9 @@ function buildBinaryBestErrorByBackground(
     const rowBase = ch * 16;
     const nSet = context.refSetCount[ch];
     const csfPenalty = scoringTables.csfPenaltyByChar[ch];
+    const covRatio = nSet / PIXELS_PER_CELL;
+    const extremity = (2 * covRatio - 1) * (2 * covRatio - 1);
+    const covPenalty = covDetail * extremity;
     for (let bg = 0; bg < 16; bg++) {
       const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
       if (bgErr >= best[bg]) continue;
@@ -931,7 +980,8 @@ function buildBinaryBestErrorByBackground(
           bgErr +
           setErrMatrix[rowBase + fg] +
           csfPenalty +
-          scoringTables.pairAdjustment[mixIndex];
+          scoringTables.pairAdjustment[mixIndex] +
+          covPenalty;
         if (total < best[bg]) best[bg] = total;
       }
     }
@@ -1105,6 +1155,81 @@ function buildBinaryCandidatePoolsForCell(
             ),
             poolSize
           );
+        }
+      }
+    }
+  }
+
+  // Competitive wildcard admission: score low-contrast fg candidates and admit
+  // only those that are competitive with the best normal candidate or have
+  // clearly superior color-match (blend quality).
+  for (let bi = 0; bi < backgrounds.length; bi++) {
+    const bg = backgrounds[bi];
+    const pool = pools[bi];
+    const bestNormal = pool.length > 0 ? pool[0].baseError : Infinity;
+    const scoreThreshold = bestNormal * (1 + WILDCARD_SCORE_MARGIN);
+    let admitted = 0;
+
+    for (let fg = 0; fg < 16 && admitted < WILDCARD_MAX_ADMITTED; fg++) {
+      if (fg === bg) continue;
+      if (hasMinimumContrast(metrics, fg, bg)) continue; // already in main pass
+
+      for (let charIndex = 0; charIndex < candidateScreencodes.length && admitted < WILDCARD_MAX_ADMITTED; charIndex++) {
+        const ch = candidateScreencodes[charIndex];
+        const rowBase = ch * 16;
+        const nSet = context.refSetCount[ch];
+        const sfCh = context.glyphAtlas.spatialFrequency[ch];
+        const csfPenalty = sfCh <= 0.1 ? scoringTables.csfPenaltyByChar[ch] : 0;
+        const csfBase = sfCh > 0.1 ? settings.csfWeight * sfCh * Math.max(0, 1 - cell.detailScore) : 0;
+
+        const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
+        if (bgErr >= scoreThreshold) continue;
+
+        const mixIndex = binaryMixIndex(nSet, bg, fg);
+        let total =
+          bgErr +
+          setErrMatrix[rowBase + fg] +
+          csfPenalty +
+          scoringTables.pairAdjustment[mixIndex];
+
+        if (hasEdges) {
+          const [tLo, tHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+          const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
+          const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
+          const edgeMismatches =
+            popcount32((mLo & eMaskLo) >>> 0) +
+            popcount32((mHi & eMaskHi) >>> 0);
+          total += edgeWeight * edgeMismatches;
+        }
+
+        if (sfCh > 0.1) {
+          const blendQuality = scoringTables.blendMatchBonus[mixIndex];
+          total += csfBase * (1 - BLEND_CSF_RELIEF * blendQuality);
+        }
+
+        // Admission criteria: competitive score OR strong blend quality
+        const blendQuality = scoringTables.blendMatchBonus[mixIndex];
+        const isCompetitive = total <= scoreThreshold;
+        const hasColorAdvantage = blendQuality >= WILDCARD_BLEND_QUALITY_MIN;
+        if (!isCompetitive && !hasColorAdvantage) continue;
+
+        if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
+          insertTopCandidate(
+            pool,
+            makeBinaryCandidate(
+              context.ref[ch],
+              ch,
+              bg,
+              fg,
+              context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+              total,
+              scoringTables.brightnessResidual[mixIndex],
+              metrics.pairDiff,
+              metrics.maxPairDiff
+            ),
+            poolSize
+          );
+          admitted++;
         }
       }
     }

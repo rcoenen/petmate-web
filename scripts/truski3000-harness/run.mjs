@@ -12,7 +12,14 @@ const harnessRoot = path.resolve(repoRoot, 'scripts', 'truski3000-harness');
 const fixturesDir = path.resolve(harnessRoot, 'fixtures');
 const publicFixturesDir = path.resolve(repoRoot, 'public', 'truski3000-harness', 'fixtures');
 const outputRoot = path.resolve(harnessRoot, 'output');
-const latestOutputDir = path.resolve(outputRoot, 'latest');
+const nameFlagIndex = process.argv.indexOf('--name');
+const runName = nameFlagIndex >= 0 ? process.argv[nameFlagIndex + 1] ?? null : null;
+if (nameFlagIndex >= 0 && !runName) {
+  console.error('--name requires a value');
+  process.exit(1);
+}
+const outputDirName = runName ?? 'latest';
+const latestOutputDir = path.resolve(outputRoot, outputDirName);
 const baselineDir = path.resolve(harnessRoot, 'baselines');
 const manifestPath = path.resolve(harnessRoot, 'manifest.json');
 const benchmarkOutputPath = path.resolve(outputRoot, 'benchmarks', 'latest.json');
@@ -54,7 +61,6 @@ const iterationsFlagIndex = process.argv.indexOf('--iterations');
 const benchmarkIterations = iterationsFlagIndex >= 0
   ? Math.max(1, Number.parseInt(process.argv[iterationsFlagIndex + 1] ?? '2', 10) || 2)
   : 2;
-
 const modeMatrix = {
   standard: {
     outputStandard: true,
@@ -385,6 +391,12 @@ function attachHarnessConsole(page) {
         console.log(text);
         return;
       }
+    }
+
+    // Pass through TruSkii diagnostic messages
+    if (text.startsWith('[TruSkii')) {
+      console.log(text);
+      return;
     }
   });
 }
@@ -724,7 +736,7 @@ async function generateComparisonHtml(scenarios) {
     const bq = row.baseline ? row.baseline.imageQuality : null;
     const fixtureSrc = '../fixtures/' + row.fixture;
     const baselineSrc = '../baselines/' + row.mode + '/' + row.fixtureName + '/preview.png';
-    const latestSrc = 'latest/' + row.mode + '/' + row.fixtureName + '/preview.png';
+    const latestSrc = outputDirName + '/' + row.mode + '/' + row.fixtureName + '/preview.png';
 
     function summaryInfo(summary, label) {
       if (!summary) return '';

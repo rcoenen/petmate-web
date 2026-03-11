@@ -26,7 +26,7 @@ import type {
   ProgressCallback as StandardProgressCallback,
   StandardCandidateScoringKernel,
 } from './imageConverterStandardCore';
-import { BinaryWasmKernel } from './imageConverterBinaryWasm';
+import { BinaryWasmKernel, type StandardWasmRequestSession } from './imageConverterBinaryWasm';
 import { McmWasmKernel } from './imageConverterMcmWasm';
 import type {
   ConverterWorkerRequestMessage,
@@ -41,6 +41,7 @@ type WorkerState = {
   requestData: Map<number, {
     preprocessed: Parameters<typeof solveStandardOffset>[0];
     settings: Parameters<typeof solveStandardOffset>[1];
+    standardWasmSession?: StandardWasmRequestSession;
   }>;
   standardPaletteCache: Map<string, PaletteMetricData>;
   modePaletteCache: Map<string, ModePaletteMetricData>;
@@ -140,9 +141,15 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
     }
 
     if (message.type === 'start-request') {
+      let standardWasmSession: StandardWasmRequestSession | undefined;
+      if (state.scoringKernel instanceof BinaryWasmKernel && state.enabledModes.has('standard')) {
+        const metrics = getStandardMetrics(message.settings.paletteId);
+        standardWasmSession = state.scoringKernel.beginStandardRequest(message.preprocessed, metrics.pairDiff);
+      }
       state.requestData.set(message.requestId, {
         preprocessed: message.preprocessed,
         settings: message.settings,
+        standardWasmSession,
       });
       state.activeRequests.add(message.requestId);
       return;
@@ -190,7 +197,7 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
             })(),
             getStandardMetrics(request.settings.paletteId),
             message.offset,
-            state.scoringKernel ?? undefined,
+            request.standardWasmSession?.scoringKernel ?? state.scoringKernel ?? undefined,
             shouldCancel,
             postProgress
           )

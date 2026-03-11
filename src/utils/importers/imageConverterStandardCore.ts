@@ -134,6 +134,47 @@ export interface StandardCandidateScoringKernel {
     pairDiff: Float64Array,
     context: CharsetConversionContext
   ): Uint8Array;
+  computeBestErrorByBackground?(
+    weightedPixelErrors: Float32Array,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ): Float64Array;
+  computeCandidatePoolsByBackground?(
+    weightedPixelErrors: Float32Array,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    backgrounds: number[],
+    poolSize: number,
+    edgeMaskLo: number,
+    edgeMaskHi: number,
+    edgeWeight: number,
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ): {
+    counts: Uint8Array;
+    chars: Uint8Array;
+    fgs: Uint8Array;
+    scores: Float64Array;
+    setErrs: Float32Array;
+  };
 }
 
 export interface StandardPreprocessedImage {
@@ -928,9 +969,27 @@ function buildBinaryBestErrorByBackground(
   settings: ConverterSettings,
   scoringKernel?: StandardCandidateScoringKernel
 ): Float64Array {
+  const candidateScreencodes = getCandidateScreencodes(settings.includeTypographic);
+  if (scoringKernel?.computeBestErrorByBackground) {
+    return scoringKernel.computeBestErrorByBackground(
+      cell.weightedPixelErrors,
+      cell.totalErrByColor,
+      cell.avgL,
+      cell.avgA,
+      cell.avgB,
+      cell.detailScore,
+      {
+        lumMatchWeight: settings.lumMatchWeight,
+        csfWeight: settings.csfWeight,
+      },
+      candidateScreencodes,
+      metrics,
+      context
+    );
+  }
+
   const best = new Float64Array(16);
   best.fill(Infinity);
-  const candidateScreencodes = getCandidateScreencodes(settings.includeTypographic);
   const foregroundsByBackground = getForegroundCandidatesByBackground(metrics);
   const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings);
 
@@ -1098,71 +1157,122 @@ function buildBinaryCandidatePoolsForCell(
     return pools;
   }
 
-  const setErrMatrix = computeSetErrMatrix(cell, context, scoringKernel);
-
-  for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
-    const ch = candidateScreencodes[charIndex];
-    const rowBase = ch * 16;
-    const nSet = context.refSetCount[ch];
-    const sfCh = context.glyphAtlas.spatialFrequency[ch];
-    // For low-frequency characters (solid blocks, quarter-fills), use the precomputed
-    // CSF penalty directly. For high-frequency characters, compute the net CSF/blend
-    // term inline so that blend quality can reduce or negate the penalty.
-    const csfPenalty = sfCh <= 0.1 ? scoringTables.csfPenaltyByChar[ch] : 0;
-    const csfBase = sfCh > 0.1 ? settings.csfWeight * sfCh * Math.max(0, 1 - cell.detailScore) : 0;
+  let setErrMatrix: Float32Array;
+  if (scoringKernel?.computeCandidatePoolsByBackground) {
+    const wasmPools = scoringKernel.computeCandidatePoolsByBackground(
+      cell.weightedPixelErrors,
+      cell.totalErrByColor,
+      cell.avgL,
+      cell.avgA,
+      cell.avgB,
+      cell.detailScore,
+      {
+        lumMatchWeight: settings.lumMatchWeight,
+        csfWeight: settings.csfWeight,
+      },
+      backgrounds,
+      poolSize,
+      eMaskLo,
+      eMaskHi,
+      edgeWeight,
+      candidateScreencodes,
+      metrics,
+      context
+    );
+    setErrMatrix = wasmPools.setErrs;
 
     for (let bi = 0; bi < backgrounds.length; bi++) {
       const bg = backgrounds[bi];
       const pool = pools[bi];
-      const worst = pool.length >= poolSize ? pool[pool.length - 1].baseError : Infinity;
-      const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
-      if (bgErr >= worst) continue;
+      const count = Math.min(poolSize, wasmPools.counts[bi] ?? 0);
+      const base = bi * 16;
+      for (let slot = 0; slot < count; slot++) {
+        const ch = wasmPools.chars[base + slot] ?? 0;
+        const fg = wasmPools.fgs[base + slot] ?? 0;
+        const total = wasmPools.scores[base + slot] ?? Infinity;
+        const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
+        pool.push(
+          makeBinaryCandidate(
+            context.ref[ch],
+            ch,
+            bg,
+            fg,
+            context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+            total,
+            scoringTables.brightnessResidual[mixIndex],
+            metrics.pairDiff,
+            metrics.maxPairDiff
+          )
+        );
+      }
+    }
+  } else {
+    setErrMatrix = computeSetErrMatrix(cell, context, scoringKernel);
 
-      const foregrounds = foregroundsByBackground[bg];
-      for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
-        const fg = foregrounds[fgIndex];
-        const mixIndex = binaryMixIndex(nSet, bg, fg);
-        let total =
-          bgErr +
-          setErrMatrix[rowBase + fg] +
-          csfPenalty +
-          scoringTables.pairAdjustment[mixIndex];
+    for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
+      const ch = candidateScreencodes[charIndex];
+      const rowBase = ch * 16;
+      const nSet = context.refSetCount[ch];
+      const sfCh = context.glyphAtlas.spatialFrequency[ch];
+      // For low-frequency characters (solid blocks, quarter-fills), use the precomputed
+      // CSF penalty directly. For high-frequency characters, compute the net CSF/blend
+      // term inline so that blend quality can reduce or negate the penalty.
+      const csfPenalty = sfCh <= 0.1 ? scoringTables.csfPenaltyByChar[ch] : 0;
+      const csfBase = sfCh > 0.1 ? settings.csfWeight * sfCh * Math.max(0, 1 - cell.detailScore) : 0;
 
-        // TRUSKI3000: Edge-weighted penalty for set-error path
-        if (hasEdges) {
-          const [tLo, tHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
-          const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
-          const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
-          const edgeMismatches =
-            popcount32((mLo & eMaskLo) >>> 0) +
-            popcount32((mHi & eMaskHi) >>> 0);
-          total += edgeWeight * edgeMismatches;
-        }
+      for (let bi = 0; bi < backgrounds.length; bi++) {
+        const bg = backgrounds[bi];
+        const pool = pools[bi];
+        const worst = pool.length >= poolSize ? pool[pool.length - 1].baseError : Infinity;
+        const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
+        if (bgErr >= worst) continue;
 
-        // TRUSKI3000: Net CSF/blend term for set-error path — blend quality
-        // reduces the CSF penalty so dithering characters can win when their
-        // perceptual blend matches the source color.
-        if (sfCh > 0.1) {
-          const blendQuality = scoringTables.blendMatchBonus[mixIndex];
-          total += csfBase * (1 - BLEND_CSF_RELIEF * blendQuality);
-        }
+        const foregrounds = foregroundsByBackground[bg];
+        for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
+          const fg = foregrounds[fgIndex];
+          const mixIndex = binaryMixIndex(nSet, bg, fg);
+          let total =
+            bgErr +
+            setErrMatrix[rowBase + fg] +
+            csfPenalty +
+            scoringTables.pairAdjustment[mixIndex];
 
-        if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
-          insertTopCandidate(
-            pool,
-            makeBinaryCandidate(
-              context.ref[ch],
-              ch,
-              bg,
-              fg,
-              context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
-              total,
-              scoringTables.brightnessResidual[mixIndex],
-              metrics.pairDiff,
-              metrics.maxPairDiff
-            ),
-            poolSize
-          );
+          // TRUSKI3000: Edge-weighted penalty for set-error path
+          if (hasEdges) {
+            const [tLo, tHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+            const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
+            const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
+            const edgeMismatches =
+              popcount32((mLo & eMaskLo) >>> 0) +
+              popcount32((mHi & eMaskHi) >>> 0);
+            total += edgeWeight * edgeMismatches;
+          }
+
+          // TRUSKI3000: Net CSF/blend term for set-error path — blend quality
+          // reduces the CSF penalty so dithering characters can win when their
+          // perceptual blend matches the source color.
+          if (sfCh > 0.1) {
+            const blendQuality = scoringTables.blendMatchBonus[mixIndex];
+            total += csfBase * (1 - BLEND_CSF_RELIEF * blendQuality);
+          }
+
+          if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
+            insertTopCandidate(
+              pool,
+              makeBinaryCandidate(
+                context.ref[ch],
+                ch,
+                bg,
+                fg,
+                context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+                total,
+                scoringTables.brightnessResidual[mixIndex],
+                metrics.pairDiff,
+                metrics.maxPairDiff
+              ),
+              poolSize
+            );
+          }
         }
       }
     }

@@ -175,6 +175,21 @@ export interface StandardCandidateScoringKernel {
     scores: Float64Array;
     setErrs: Float32Array;
   };
+  solveSelectionWithNeighborPasses?(
+    counts: Uint8Array,
+    chars: Uint8Array,
+    baseErrors: Float64Array,
+    brightnessResiduals: Float64Array,
+    repeatH: Float64Array,
+    repeatV: Float64Array,
+    edgeLeft: Uint8Array,
+    edgeRight: Uint8Array,
+    edgeTop: Uint8Array,
+    edgeBottom: Uint8Array,
+    hBoundaryDiffs: Float32Array,
+    vBoundaryDiffs: Float32Array,
+    passCount: number
+  ): Uint8Array;
 }
 
 export interface StandardPreprocessedImage {
@@ -792,6 +807,16 @@ const _reusableBinaryCsfPenalty = new Float32Array(256);
 const _reusableBlendMatchBonus = new Float64Array((PIXELS_PER_CELL + 1) * 16 * 16);
 const _candidateScreencodeCache = new Map<string, Uint16Array>();
 const _foregroundCandidateCache = new WeakMap<PaletteMetricData, Map<number, Uint8Array[]>>();
+const _reusableSolveCounts = new Uint8Array(CELL_COUNT);
+const _reusableSolveChars = new Uint8Array(CELL_COUNT * 16);
+const _reusableSolveBaseErrors = new Float64Array(CELL_COUNT * 16);
+const _reusableSolveBrightnessResiduals = new Float64Array(CELL_COUNT * 16);
+const _reusableSolveRepeatH = new Float64Array(CELL_COUNT * 16);
+const _reusableSolveRepeatV = new Float64Array(CELL_COUNT * 16);
+const _reusableSolveEdgeLeft = new Uint8Array(CELL_COUNT * 16 * 8);
+const _reusableSolveEdgeRight = new Uint8Array(CELL_COUNT * 16 * 8);
+const _reusableSolveEdgeTop = new Uint8Array(CELL_COUNT * 16 * 8);
+const _reusableSolveEdgeBottom = new Uint8Array(CELL_COUNT * 16 * 8);
 
 function computeSetErrMatrixJs(
   weightedPixelErrors: Float32Array,
@@ -1458,6 +1483,64 @@ function seedSelectionWithBrightnessDebt(
   return { selectedIndices, selected };
 }
 
+function trySolveSelectionWithKernel(
+  candidatePools: ScreenCandidate[][],
+  analysis: SourceAnalysis,
+  scoringKernel?: StandardCandidateScoringKernel
+): { selectedIndices: Int32Array; selected: ScreenCandidate[] } | null {
+  if (!scoringKernel?.solveSelectionWithNeighborPasses) {
+    return null;
+  }
+
+  for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+    const pool = candidatePools[cellIndex];
+    const count = Math.min(pool.length, 16);
+    _reusableSolveCounts[cellIndex] = count;
+
+    for (let candidateIndex = 0; candidateIndex < count; candidateIndex++) {
+      const candidate = pool[candidateIndex];
+      const flatIndex = cellIndex * 16 + candidateIndex;
+      const edgeBase = flatIndex * 8;
+      _reusableSolveChars[flatIndex] = candidate.char;
+      _reusableSolveBaseErrors[flatIndex] = candidate.baseError;
+      _reusableSolveBrightnessResiduals[flatIndex] = candidate.brightnessResidual;
+      _reusableSolveRepeatH[flatIndex] = candidate.repeatH;
+      _reusableSolveRepeatV[flatIndex] = candidate.repeatV;
+      _reusableSolveEdgeLeft.set(candidate.edgeLeft, edgeBase);
+      _reusableSolveEdgeRight.set(candidate.edgeRight, edgeBase);
+      _reusableSolveEdgeTop.set(candidate.edgeTop, edgeBase);
+      _reusableSolveEdgeBottom.set(candidate.edgeBottom, edgeBase);
+    }
+  }
+
+  const wasmSelectedIndices = scoringKernel.solveSelectionWithNeighborPasses(
+    _reusableSolveCounts,
+    _reusableSolveChars,
+    _reusableSolveBaseErrors,
+    _reusableSolveBrightnessResiduals,
+    _reusableSolveRepeatH,
+    _reusableSolveRepeatV,
+    _reusableSolveEdgeLeft,
+    _reusableSolveEdgeRight,
+    _reusableSolveEdgeTop,
+    _reusableSolveEdgeBottom,
+    analysis.hBoundaryDiffs,
+    analysis.vBoundaryDiffs,
+    SCREEN_SOLVE_PASSES
+  );
+
+  const selectedIndices = new Int32Array(CELL_COUNT);
+  const selected = new Array<ScreenCandidate>(CELL_COUNT);
+  for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+    const pool = candidatePools[cellIndex];
+    const selectedIndex = Math.min(pool.length - 1, wasmSelectedIndices[cellIndex] ?? 0);
+    selectedIndices[cellIndex] = selectedIndex;
+    selected[cellIndex] = pool[selectedIndex];
+  }
+
+  return { selectedIndices, selected };
+}
+
 function computeCellCost(
   cellIndex: number,
   candidate: ScreenCandidate,
@@ -1599,47 +1682,51 @@ async function solveScreen(
   candidatePools: ScreenCandidate[][],
   analysis: SourceAnalysis,
   metrics: PaletteMetricData,
+  scoringKernel?: StandardCandidateScoringKernel,
   shouldCancel?: () => boolean
 ): Promise<PetsciiResult> {
-  const seededSelection = seedSelectionWithBrightnessDebt(candidatePools);
-  const selectedIndices = seededSelection.selectedIndices;
-  const selected = seededSelection.selected;
+  const wasmSelection = trySolveSelectionWithKernel(candidatePools, analysis, scoringKernel);
+  const fallbackSelection = wasmSelection ? null : seedSelectionWithBrightnessDebt(candidatePools);
+  const selectedIndices = wasmSelection?.selectedIndices ?? fallbackSelection!.selectedIndices;
+  const selected = wasmSelection?.selected ?? fallbackSelection!.selected;
 
-  for (let pass = 0; pass < SCREEN_SOLVE_PASSES; pass++) {
-    let changed = false;
-    const start = pass % 2 === 0 ? 0 : CELL_COUNT - 1;
-    const end = pass % 2 === 0 ? CELL_COUNT : -1;
-    const step = pass % 2 === 0 ? 1 : -1;
-    let visitCount = 0;
+  if (!wasmSelection) {
+    for (let pass = 0; pass < SCREEN_SOLVE_PASSES; pass++) {
+      let changed = false;
+      const start = pass % 2 === 0 ? 0 : CELL_COUNT - 1;
+      const end = pass % 2 === 0 ? CELL_COUNT : -1;
+      const step = pass % 2 === 0 ? 1 : -1;
+      let visitCount = 0;
 
-    for (let cellIndex = start; cellIndex !== end; cellIndex += step) {
-      const pool = candidatePools[cellIndex];
-      let bestIdx = selectedIndices[cellIndex];
-      let bestCost = Infinity;
+      for (let cellIndex = start; cellIndex !== end; cellIndex += step) {
+        const pool = candidatePools[cellIndex];
+        let bestIdx = selectedIndices[cellIndex];
+        let bestCost = Infinity;
 
-      for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex++) {
-        const candidate = pool[candidateIndex];
-        const cost = computeCellCost(cellIndex, candidate, selected, metrics, analysis);
+        for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex++) {
+          const candidate = pool[candidateIndex];
+          const cost = computeCellCost(cellIndex, candidate, selected, metrics, analysis);
 
-        if (cost < bestCost) {
-          bestCost = cost;
-          bestIdx = candidateIndex;
+          if (cost < bestCost) {
+            bestCost = cost;
+            bestIdx = candidateIndex;
+          }
+        }
+
+        if (bestIdx !== selectedIndices[cellIndex]) {
+          selectedIndices[cellIndex] = bestIdx;
+          selected[cellIndex] = pool[bestIdx];
+          changed = true;
+        }
+
+        visitCount++;
+        if ((visitCount & 127) === 0) {
+          await yieldToUI(shouldCancel);
         }
       }
-
-      if (bestIdx !== selectedIndices[cellIndex]) {
-        selectedIndices[cellIndex] = bestIdx;
-        selected[cellIndex] = pool[bestIdx];
-        changed = true;
-      }
-
-      visitCount++;
-      if ((visitCount & 127) === 0) {
-        await yieldToUI(shouldCancel);
-      }
+      if (!changed) break;
+      await yieldToUI(shouldCancel);
     }
-    if (!changed) break;
-    await yieldToUI(shouldCancel);
   }
 
   runColorCoherencePass(candidatePools, selectedIndices, selected, analysis, metrics);
@@ -1754,7 +1841,7 @@ async function solveStandardCharsetForAnalysis(
 
     const candidatePools = candidatePoolsByBackground[index];
     const tSolve0 = performance.now();
-    const solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel);
+    const solved = await solveScreen(candidatePools, analysis, metrics, scoringKernel, shouldCancel);
     solveTime += performance.now() - tSolve0;
     const conversion: ConversionResult = {
       screencodes: solved.screencodes,

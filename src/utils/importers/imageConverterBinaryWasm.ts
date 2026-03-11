@@ -50,6 +50,19 @@ type BinaryKernelExports = {
   getStandardPoolFgsPtr(): number;
   getStandardPoolScoresPtr(): number;
   getStandardPoolCountsPtr(): number;
+  getStandardSolveCountsPtr(): number;
+  getStandardSolveCharsPtr(): number;
+  getStandardSolveBaseErrorsPtr(): number;
+  getStandardSolveBrightnessResidualsPtr(): number;
+  getStandardSolveRepeatHPtr(): number;
+  getStandardSolveRepeatVPtr(): number;
+  getStandardSolveEdgeLeftPtr(): number;
+  getStandardSolveEdgeRightPtr(): number;
+  getStandardSolveEdgeTopPtr(): number;
+  getStandardSolveEdgeBottomPtr(): number;
+  getStandardSolveHBoundaryDiffsPtr(): number;
+  getStandardSolveVBoundaryDiffsPtr(): number;
+  getStandardSolveSelectedIndicesPtr(): number;
   computeSetErrs(): void;
   computeHammingDistances(): void;
   computeStandardBestByBackground(
@@ -77,6 +90,7 @@ type BinaryKernelExports = {
     edgeMaskHi: number,
     edgeWeight: number
   ): void;
+  computeStandardSolveSelection(passCount: number): void;
 };
 
 type BinaryKernelImports = WebAssembly.Imports & {
@@ -134,6 +148,21 @@ export interface StandardCandidateScoringKernel {
     scores: Float64Array;
     setErrs: Float32Array;
   };
+  solveSelectionWithNeighborPasses?(
+    counts: Uint8Array,
+    chars: Uint8Array,
+    baseErrors: Float64Array,
+    brightnessResiduals: Float64Array,
+    repeatH: Float64Array,
+    repeatV: Float64Array,
+    edgeLeft: Uint8Array,
+    edgeRight: Uint8Array,
+    edgeTop: Uint8Array,
+    edgeBottom: Uint8Array,
+    hBoundaryDiffs: Float32Array,
+    vBoundaryDiffs: Float32Array,
+    passCount: number
+  ): Uint8Array;
 }
 
 export interface BinaryWasmKernelCreateResult {
@@ -233,6 +262,19 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
   private standardPoolFgsView: Uint8Array;
   private standardPoolScoresView: Float64Array;
   private standardPoolCountsView: Uint8Array;
+  private standardSolveCountsView: Uint8Array;
+  private standardSolveCharsView: Uint8Array;
+  private standardSolveBaseErrorsView: Float64Array;
+  private standardSolveBrightnessResidualsView: Float64Array;
+  private standardSolveRepeatHView: Float64Array;
+  private standardSolveRepeatVView: Float64Array;
+  private standardSolveEdgeLeftView: Uint8Array;
+  private standardSolveEdgeRightView: Uint8Array;
+  private standardSolveEdgeTopView: Uint8Array;
+  private standardSolveEdgeBottomView: Uint8Array;
+  private standardSolveHBoundaryDiffsView: Float32Array;
+  private standardSolveVBoundaryDiffsView: Float32Array;
+  private standardSolveSelectedIndicesView: Uint8Array;
   private readonly standardResidentLayout: StandardWasmResidentLayout;
 
   private constructor(exports: BinaryKernelExports) {
@@ -372,6 +414,71 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.getStandardPoolCountsPtr(),
       16
     );
+    this.standardSolveCountsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveCountsPtr(),
+      40 * 25
+    );
+    this.standardSolveCharsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveCharsPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
+    );
+    this.standardSolveBaseErrorsView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardSolveBaseErrorsPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
+    );
+    this.standardSolveBrightnessResidualsView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardSolveBrightnessResidualsPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
+    );
+    this.standardSolveRepeatHView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardSolveRepeatHPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
+    );
+    this.standardSolveRepeatVView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardSolveRepeatVPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
+    );
+    this.standardSolveEdgeLeftView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveEdgeLeftPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE * 8
+    );
+    this.standardSolveEdgeRightView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveEdgeRightPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE * 8
+    );
+    this.standardSolveEdgeTopView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveEdgeTopPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE * 8
+    );
+    this.standardSolveEdgeBottomView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveEdgeBottomPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE * 8
+    );
+    this.standardSolveHBoundaryDiffsView = new Float32Array(
+      exports.memory.buffer,
+      exports.getStandardSolveHBoundaryDiffsPtr(),
+      25 * 39 * 8
+    );
+    this.standardSolveVBoundaryDiffsView = new Float32Array(
+      exports.memory.buffer,
+      exports.getStandardSolveVBoundaryDiffsPtr(),
+      24 * 40 * 8
+    );
+    this.standardSolveSelectedIndicesView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveSelectedIndicesPtr(),
+      40 * 25
+    );
     this.standardResidentLayout = {
       srcL: { ptr: exports.getStandardSrcLPtr(), length: this.standardSrcLView.length },
       srcA: { ptr: exports.getStandardSrcAPtr(), length: this.standardSrcAView.length },
@@ -500,6 +607,37 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       scores: this.standardPoolScoresView.subarray(0, backgrounds.length * STANDARD_WASM_MAX_POOL_SIZE),
       setErrs: this.outputSetErrsView,
     };
+  }
+
+  solveSelectionWithNeighborPasses(
+    counts: Uint8Array,
+    chars: Uint8Array,
+    baseErrors: Float64Array,
+    brightnessResiduals: Float64Array,
+    repeatH: Float64Array,
+    repeatV: Float64Array,
+    edgeLeft: Uint8Array,
+    edgeRight: Uint8Array,
+    edgeTop: Uint8Array,
+    edgeBottom: Uint8Array,
+    hBoundaryDiffs: Float32Array,
+    vBoundaryDiffs: Float32Array,
+    passCount: number
+  ): Uint8Array {
+    this.standardSolveCountsView.set(counts);
+    this.standardSolveCharsView.set(chars);
+    this.standardSolveBaseErrorsView.set(baseErrors);
+    this.standardSolveBrightnessResidualsView.set(brightnessResiduals);
+    this.standardSolveRepeatHView.set(repeatH);
+    this.standardSolveRepeatVView.set(repeatV);
+    this.standardSolveEdgeLeftView.set(edgeLeft);
+    this.standardSolveEdgeRightView.set(edgeRight);
+    this.standardSolveEdgeTopView.set(edgeTop);
+    this.standardSolveEdgeBottomView.set(edgeBottom);
+    this.standardSolveHBoundaryDiffsView.set(hBoundaryDiffs);
+    this.standardSolveVBoundaryDiffsView.set(vBoundaryDiffs);
+    this.exports.computeStandardSolveSelection(passCount);
+    return this.standardSolveSelectedIndicesView;
   }
 
   getStandardResidentLayout(): StandardWasmResidentLayout {

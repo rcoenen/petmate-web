@@ -33,14 +33,14 @@ Last updated: 2026-03-10
 
 ---
 
-## Phase 3 — Perceptual Scoring Upgrades ✅ MOSTLY COMPLETE
+## Phase 3 — Perceptual Scoring Upgrades ✅ COMPLETE
 
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 3.1 | **CSF-weighted glyph scoring** | ✅ | `computeCsfPenalty()` — high-freq glyph in smooth cell = penalty. Unified with blend bonus via `BLEND_CSF_RELIEF=1.5` |
 | 3.2 | **Edge continuity post-pass** | ✅ | 3 passes, `EDGE_CONTINUITY_MAX_DELTA=12.0`. Directional alignment bonus (`EDGE_ALIGNMENT_WEIGHT=14.0`) |
-| 3.3 | **Saliency weighting in palette solve** | ❌ Missing | Saliency used per-pixel during matching, not during ECM/MCM register selection |
-| 3.4 | **ECM register re-solve** | ❌ Missing | No k-means on actual assignments |
+| 3.3 | **Saliency weighting in palette solve** | ✅ | ECM background-set ranking and MCM triple ranking are weighted by per-cell saliency |
+| 3.4 | **ECM register re-solve** | ✅ | `runEcmRegisterResolvePass()` refines actual assignments and re-solves affected cells |
 
 **Beyond original roadmap (added during tuning):**
 
@@ -71,7 +71,7 @@ Last updated: 2026-03-10
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 5.1 | **XOR + popcount Hamming path** | ⚠️ Implemented, disabled | `computeBinaryHammingDistancesJs()` in `imageConverterBitPacking.ts`. Disabled because set-error-matrix produces better quality (`ENABLE_EXPERIMENTAL_HAMMING_FAST_PATH=false`) |
-| 5.2 | **Distance LUT in WASM linear memory** | ❌ Missing | `pairDiff` remains in JS Float64Array |
+| 5.2 | **Distance LUT in WASM linear memory** | ✅ | Host uploads `pairDiff` into WASM linear memory once per kernel instance; kernels read it directly thereafter |
 | 5.3 | **Full WASM kernel buildout** | ⚠️ Partial | Only `computeSetErrs` ported to WASM (f32x4 SIMD). Currently **slower than JS** — needs profiling. Auto-detection falls back to JS when WASM is slower |
 
 **Status: current WASM work is groundwork, not the end state. JS remains the practical reference path today, but the long-term performance target is a WASM-first engine.**
@@ -97,9 +97,9 @@ The capstone: move the full conversion engine into WASM while keeping JavaScript
 |-------|--------|--------------|
 | 1. Quick Wins | ✅ Complete | Brightness debt, color coherence, typographic exclusion, contrast pruning |
 | 2. Foundation | ✅ Complete | Detail scores, gradient directions, full glyph atlas |
-| 3. Perceptual Scoring | ✅ ~90% | CSF, edge continuity, blend bonus, coverage extremity, wildcards. Missing: saliency in palette solve, ECM re-solve |
+| 3. Perceptual Scoring | ✅ Complete | CSF, saliency-weighted palette solve, ECM re-solve, edge continuity, blend bonus, coverage extremity, wildcards |
 | 4. Output & Measurement | ✅ Complete | Full quality metrics suite + cellSSIM + test harness + per-cell metadata export + 4:3 preview |
-| 5. WASM Performance | ⚠️ ~20% | Hamming path + WASM kernel groundwork exist, but JS still wins on most workloads |
+| 5. WASM Performance | ⚠️ ~35% | Hamming path, parity harness, benchmarks, and LUT residency groundwork exist, but JS still wins on most workloads |
 | 6. WASM-First Migration | ❌ 0% | Move the full solver pipeline and resident state into WASM |
 
 **Current engine state: ~90% of spec implemented with all major perceptual features active. Remaining work is ECM/MCM quality polish plus the WASM endgame: finish Phase 5 groundwork and then move the full solver pipeline into WASM in Phase 6.**

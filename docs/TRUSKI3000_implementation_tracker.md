@@ -43,11 +43,11 @@ Last updated: 2026-03-10
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
 | Colodore palette in OKLAB | **DONE** | c64Palettes.ts, imageConverter.ts | Multiple palettes available; Colodore is default |
-| 16×16 perceptual distance LUT | **DONE** | imageConverter.ts | `pairDiff` Float64Array. In JS memory, not WASM linear memory |
+| 16×16 perceptual distance LUT | **DONE** | imageConverter.ts, imageConverterBinaryWasm.ts, imageConverterMcmWasm.ts | `pairDiff` built in JS and uploaded into WASM linear memory per kernel instance for direct kernel reads |
 | Standard: background selection | **DONE** | imageConverterStandardCore.ts | Coarse scorer samples 160 cells, ranks all 16 backgrounds, top 8 finalists. Coverage extremity penalty scaled by lumDistance steers toward PETSCII-friendly backgrounds |
 | ECM: 4 bg registers | **DIFFERENT** | imageConverter.ts | Exhaustive C(16,4)=1820 enumeration + ranking (not k-means) |
 | MCM: shared color selection | **DIFFERENT** | imageConverter.ts | Exhaustive 16×15×14=3360 enumeration + ranking (not k-means) |
-| Saliency weighting in palette solve | **MISSING** | — | Saliency used per-pixel during matching, not during register selection |
+| Saliency weighting in palette solve | **DONE** | imageConverter.ts | ECM background-set ranking and MCM triple ranking weight sample cells by `saliencyWeight` |
 
 ---
 
@@ -100,7 +100,7 @@ Last updated: 2026-03-10
 | Color coherence pass | **DONE** | imageConverterStandardCore.ts | 3 passes (`COLOR_COHERENCE_PASSES`), re-matches outlier cells constrained to neighbor colors (`MAX_DELTA=18.0`) |
 | Edge continuity pass | **DONE** | imageConverterStandardCore.ts | 3 passes (`EDGE_CONTINUITY_PASSES`), aligns glyph directionality along detected edges (`MAX_DELTA=12.0`) |
 | Neighbor color penalty | **DONE** | imageConverter.ts | `computeNeighborPenalty()` scores edge color compatibility |
-| ECM register re-solve pass | **MISSING** | — | No k-means on actual assignments; no targeted re-match |
+| ECM register re-solve pass | **DONE** | imageConverter.ts | `runEcmRegisterResolvePass()` refines the chosen background set from actual assignments and re-solves affected cells |
 
 ---
 
@@ -160,7 +160,7 @@ All constants in `imageConverterStandardCore.ts`:
 2. **Coverage extremity × lumDistance for register selection** — Apply coverage penalty at the ECM register-set ranking level: penalize background combos that leave large luminance gaps, forcing cells into near-solid blocks. 4/16 colors is still only 25% of the palette — the bottleneck is softer than Standard but real.
 3. **Bump CHROMA_ERROR_WEIGHT to 2.0** — Standard gets better color fidelity at 2.0 vs ECM's current 1.0.
 4. **Port wildcard admission** — Replace blunt "disable all contrast filtering" with competitive wildcard system (score margin + blend quality threshold). More selective than flooding pools.
-5. **Add ECM fixtures to harness manifest** — Need ECM-mode test scenarios for systematic comparison and tuning.
+5. **Expand dedicated ECM tuning scenario sets** — Baselines now exist for the shared six-fixture set; next step is richer ECM-specific tuning scenarios rather than basic mode coverage
 
 ### Next: MCM Quality Tuning (port Standard innovations + MCM-specific)
 
@@ -172,7 +172,7 @@ All constants in `imageConverterStandardCore.ts`:
 8. **MCM triple refinement pass** — Currently the 3 shared colors (bg, mc1, mc2) are locked after coarse ranking with no refinement. ECM has `runEcmRegisterResolvePass` (k-means + re-solve, up to 4 iterations). Port an equivalent for MCM: after initial solve, k-means on (mc1, mc2) weighted by per-cell residual error, re-quantize to nearest palette colors, re-solve affected cells.
 9. **Luminance-spread penalty for triple selection** — In the coarse ranking of 3360 triples, penalize triples whose 3 shared colors are clustered in luminance. Prefer triples that cover the image's brightness range so all cells have a nearby shared color. Conceptually similar to coverage extremity × lumDistance applied at the triple level.
 10. **Wildcard admission for hires candidates** — MCM's hires path uses hard `hasMinimumContrast` gate. Port competitive wildcard system for the hires candidates within MCM.
-11. **Add MCM fixtures to harness manifest** — Need MCM-mode test scenarios for systematic comparison and tuning.
+11. **Expand dedicated MCM tuning scenario sets** — Baselines now exist for the shared six-fixture set; next step is richer MCM-specific tuning scenarios rather than basic mode coverage
 
 ### Phase 6 — WASM-First Engine Migration
 12. **Standard full solver core in WASM** — Move coarse background ranking, candidate scoring, screen solve passes, and refinement out of JS and into WASM
@@ -182,9 +182,9 @@ All constants in `imageConverterStandardCore.ts`:
 
 ### Performance (Phase 5 groundwork)
 16. **WASM kernel performance** — Current WASM is slower than JS; needs profiling and optimization
-17. **Distance LUT in WASM memory** — Move pairDiff to WASM linear memory for SIMD access
+17. **Full parity coverage for WASM paths** — Expand parity validation from targeted cases into stable mode-wide coverage before Phase 6 migration
 
 ### Quality polish (ongoing)
 18. **Chroma preservation bonus** — Implemented but disabled (weight=0); needs tuning
 19. **Edge mismatch weighting** — Implemented but disabled (weight=0.0); needs color-selection fixes
-20. **Saliency weighting in palette solve** — Use saliency during register selection, not just matching
+20. **Advanced saliency model** — Add edge energy + center bias on top of the existing deviation-based saliency now that register selection already uses saliency weights

@@ -19,6 +19,7 @@ type BinaryKernelContext = {
 type BinaryKernelExports = {
   memory: WebAssembly.Memory;
   getWeightedPixelErrorsPtr(): number;
+  getModeWeightedPixelErrorsPtr(): number;
   getPairDiffPtr(): number;
   getThresholdBitsPtr(): number;
   getPositionOffsetsPtr(): number;
@@ -70,6 +71,7 @@ type BinaryKernelExports = {
   getStandardSolveSelectedIndicesPtr(): number;
   getStandardSolveTotalErrorPtr(): number;
   computeSetErrs(): void;
+  computeModeSetErrs(cellIndex: number): void;
   computeHammingDistances(): void;
   computeStandardBestByBackground(
     avgL: number,
@@ -105,6 +107,10 @@ type BinaryKernelImports = WebAssembly.Imports & {
   env: {
     abort(message?: number, fileName?: number, line?: number, column?: number): never;
   };
+};
+
+type ResidentModeBinaryCell = {
+  weightedPixelErrors: Float32Array;
 };
 
 export interface StandardCandidateScoringKernel {
@@ -261,7 +267,9 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
   private loadedMetrics: PaletteMetricData | null = null;
   private loadedCandidateScreencodes: Uint16Array | null = null;
   private loadedStandardPreprocessed: StandardPreprocessedImage | null = null;
+  private loadedModeCells: ArrayLike<ResidentModeBinaryCell> | null = null;
   private weightedPixelErrorsView: Float32Array;
+  private modeWeightedPixelErrorsView: Float32Array;
   private pairDiffView: Float32Array;
   private thresholdBitsView: Uint32Array;
   private positionOffsetsView: Int32Array;
@@ -315,6 +323,11 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.memory.buffer,
       exports.getWeightedPixelErrorsPtr(),
       64 * 16
+    );
+    this.modeWeightedPixelErrorsView = new Float32Array(
+      exports.memory.buffer,
+      exports.getModeWeightedPixelErrorsPtr(),
+      40 * 25 * 64 * 16
     );
     this.pairDiffView = new Float32Array(
       exports.memory.buffer,
@@ -572,6 +585,23 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
     this.weightedPixelErrorsView.set(weightedPixelErrors);
     this.exports.computeSetErrs();
     return this.outputSetErrsView;
+  }
+
+  computeSetErrsForModeCell(cellIndex: number, context: BinaryKernelContext): Float32Array {
+    this.ensureContext(context);
+    this.exports.computeModeSetErrs(cellIndex);
+    return this.outputSetErrsView;
+  }
+
+  preloadModeCellErrors(cells: ArrayLike<ResidentModeBinaryCell>) {
+    if (this.loadedModeCells === cells) {
+      return;
+    }
+
+    for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+      this.modeWeightedPixelErrorsView.set(cells[cellIndex].weightedPixelErrors, cellIndex * 64 * 16);
+    }
+    this.loadedModeCells = cells;
   }
 
   computeHammingDistances(

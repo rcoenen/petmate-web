@@ -86,8 +86,8 @@ The capstone: move the full conversion engine into WASM while keeping JavaScript
 |---|---------|--------|-------|
 | 6.1 | **Standard full solver core in WASM** | ✅ Complete | Resident state, host API, coarse background ranking, candidate pools, iterative solve passes, refinement/post-passes, finalization, and wildcard admission now execute in WASM for Standard |
 | 6.2 | **ECM/MCM full solver cores in WASM** | ✅ Complete | ECM and MCM screen solve + refinement now run in WASM via shared kernel entrypoints. Per-cell scoring (computeSetErrs / computeMatrices) also uses WASM. Pool construction loops and coarse ranking remain JS |
-| 6.3 | **Resident solver state in WASM memory** | ⚠️ Partial | Standard source planes, LUT data, candidate buffers, and screen buffers are resident. Equivalent ECM/MCM residency still missing |
-| 6.4 | **Progress/result bridge + fallback reduction** | ⚠️ Partial | Standard progress/result plumbing is bridged through the worker/kernel boundary, but the JS fallback still remains for safety and ECM/MCM solver logic still lives outside the WASM-first path |
+| 6.3 | **Resident solver state in WASM memory** | ✅ Complete | Standard source planes/LUTs remain resident per request, and ECM/MCM now upload per-offset cell error tables once so both binary and MCM kernels read resident cell buffers by `cellIndex` instead of per-cell JS copies |
+| 6.4 | **Progress/result bridge + fallback reduction** | ⚠️ Partial | Next slices are explicit: move ECM pool construction/finalization into WASM, move MCM triple ranking + pool construction into WASM, then bridge compact mode buffers and reduce JS fallbacks |
 
 ### Measured Standard Benchmark
 
@@ -146,6 +146,6 @@ which re-runs JS solves during the WASM path. The per-combo stage breakdown abov
 | 3. Perceptual Scoring | ✅ Complete | CSF, saliency-weighted palette solve, ECM re-solve, edge continuity, blend bonus, coverage extremity, wildcards |
 | 4. Output & Measurement | ✅ Complete | Full quality metrics suite + cellSSIM + test harness + per-cell metadata export + 4:3 preview |
 | 5. WASM Performance | ⚠️ ~80% | All three modes (Standard, ECM, MCM) have WASM-accelerated solve phases; pool construction loops remain partly JS |
-| 6. WASM-First Migration | ⚠️ ~75% | Standard is fully WASM-first; ECM and MCM solve+refinement now WASM; pool construction optimization and broader fallback reduction remain |
+| 6. WASM-First Migration | ⚠️ ~85% | Standard is fully WASM-first; ECM/MCM now keep request and per-offset solve state resident in WASM, while pool construction optimization and broader fallback reduction remain |
 
-**Current engine state: ~94% of spec implemented with all major perceptual features active. Standard is fully WASM-first (82.10% faster). ECM solve phase is WASM-accelerated (85.8% faster per solve, 61.7% per combo). MCM solve phase is WASM-accelerated (82.4% faster per solve, 22.5% per combo). Pool construction optimization remains.**
+**Current engine state: ~95% of spec implemented with all major perceptual features active. Standard is fully WASM-first (82.10% faster). ECM solve phase is WASM-accelerated (85.8% faster per solve, 61.7% per combo). MCM solve phase is WASM-accelerated (82.4% faster per solve, 22.5% per combo). Resident mode state now stays in WASM; pool construction optimization remains.**

@@ -40,8 +40,12 @@
 - [x] 6.1f Validate Standard parity + timing against the six-fixture accepted Standard baseline set before switching any default path
   - Current exact benchmark on the six Standard fixtures: `182676.9ms` JS-only vs `32707.4ms` WASM-only = **82.10% faster** overall (`5.59x`)
 - [x] 6.2 Move the ECM and MCM full solver cores into WASM — ECM solve 85.8% faster (2.6x per combo), MCM solve 82.4% faster (1.3x per combo)
-- [ ] 6.3 Keep conversion state resident in WASM memory — source planes, glyph metadata, distance LUTs, and working buffers remain in linear memory across a conversion
+- [x] 6.3 Keep conversion state resident in WASM memory — mode workers now preload source planes/LUT state per request and upload ECM/MCM cell error tables once per offset so kernels read resident cell buffers by `cellIndex` instead of per-cell JS copies
 - [ ] 6.4 Reduce JS to orchestration/UI responsibilities — progress events and compact result buffers come back from WASM while fallback JS solver paths are reduced over time
+- [ ] 6.4a Port ECM candidate-pool construction/finalization into the binary WASM host path — JS stops rebuilding hot per-cell ECM candidate objects outside orchestration/result assembly
+- [ ] 6.4b Port MCM coarse triple ranking + candidate-pool construction into WASM — legal hires-vs-multicolor cell evaluation stays in the WASM-first search path
+- [ ] 6.4c Bridge compact ECM/MCM progress checkpoints + result buffers through the worker boundary — JS consumes compact solve outputs instead of reconstructing intermediate screen state
+- [ ] 6.4d Reduce JS fallback paths to explicit unavailable/debug paths and validate milestone canaries before any default-path change
 
 CODEX: Phase 6 execution policy:
 - Use targeted canary validation while iterating on a slice, not the full fixture matrix.

@@ -24,19 +24,24 @@ const COLOR_COUNT: i32 = 16;
 const CHAR_COUNT: i32 = 256;
 const PIXEL_COUNT: i32 = 64;
 const PAIR_COUNT: i32 = 32;
+const CELL_COUNT: i32 = 40 * 25;
 const MAX_POSITION_COUNT: i32 = CHAR_COUNT * PIXEL_COUNT;
 const MAX_PAIR_POSITION_COUNT: i32 = CHAR_COUNT * PAIR_COUNT;
 const SET_ERR_COUNT: i32 = CHAR_COUNT * COLOR_COUNT;
 const BIT_PAIR_ERR_COUNT: i32 = CHAR_COUNT * 4 * COLOR_COUNT;
 const PAIR_DIFF_COUNT: i32 = COLOR_COUNT * COLOR_COUNT;
+const MODE_WEIGHTED_PIXEL_ERROR_COUNT: i32 = CELL_COUNT * PIXEL_COUNT * COLOR_COUNT;
+const MODE_WEIGHTED_PAIR_ERROR_COUNT: i32 = CELL_COUNT * PAIR_COUNT * COLOR_COUNT;
 
 // Per-pixel error table used by the MCM hires path:
 // [64 pixels][16 palette colors].
 const weightedPixelErrors = new Float32Array(PIXEL_COUNT * COLOR_COUNT);
+const modeWeightedPixelErrors = new Float32Array(MODE_WEIGHTED_PIXEL_ERROR_COUNT);
 
 // Per-bit-pair error table used by the multicolor path:
 // [32 bit-pairs][16 palette colors].
 const weightedPairErrors = new Float32Array(PAIR_COUNT * COLOR_COUNT);
+const modeWeightedPairErrors = new Float32Array(MODE_WEIGHTED_PAIR_ERROR_COUNT);
 const pairDiff = new Float32Array(PAIR_DIFF_COUNT);
 const thresholdMasks = new Uint32Array(4);
 
@@ -65,6 +70,8 @@ const outputHamming = new Uint8Array(CHAR_COUNT);
 export function getWeightedPixelErrorsPtr(): usize { return weightedPixelErrors.dataStart; }
 export function getWeightedPairErrorsPtr(): usize { return weightedPairErrors.dataStart; }
 export function getPairDiffPtr(): usize { return pairDiff.dataStart; }
+export function getModeWeightedPixelErrorsPtr(): usize { return modeWeightedPixelErrors.dataStart; }
+export function getModeWeightedPairErrorsPtr(): usize { return modeWeightedPairErrors.dataStart; }
 export function getThresholdMasksPtr(): usize { return thresholdMasks.dataStart; }
 export function getPositionOffsetsPtr(): usize { return positionOffsets.dataStart; }
 export function getFlatPositionsPtr(): usize { return flatPositions.dataStart; }
@@ -112,10 +119,8 @@ function accumulatePositions(
   }
 }
 
-export function computeMatrices(): void {
+function computeMatricesFromBase(pixelBasePtr: usize, pairBasePtr: usize): void {
   const zero = f32x4.splat(0);
-  const pixelBasePtr = weightedPixelErrors.dataStart;
-  const pairBasePtr = weightedPairErrors.dataStart;
 
   for (let ch: i32 = 0; ch < CHAR_COUNT; ch++) {
     // Hires-style matrix used by the mixed MCM solver when a cell is treated as
@@ -141,6 +146,17 @@ export function computeMatrices(): void {
     accumulatePositions(bp2Ptr, pairBasePtr, flatMcmPositions2, mcmPositionOffsets2, ch);
     accumulatePositions(bp3Ptr, pairBasePtr, flatMcmPositions3, mcmPositionOffsets3, ch);
   }
+}
+
+export function computeMatrices(): void {
+  computeMatricesFromBase(weightedPixelErrors.dataStart, weightedPairErrors.dataStart);
+}
+
+export function computeModeMatrices(cellIndex: i32): void {
+  computeMatricesFromBase(
+    modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * PIXEL_COUNT * COLOR_COUNT) << 2),
+    modeWeightedPairErrors.dataStart + (<usize>(cellIndex * PAIR_COUNT * COLOR_COUNT) << 2)
+  );
 }
 
 export function computeHammingDistances(): void {

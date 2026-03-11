@@ -29,6 +29,7 @@ const CELL_COUNT: i32 = 40 * 25;
 const GRID_WIDTH: i32 = 40;
 const GRID_HEIGHT: i32 = 25;
 const WEIGHTED_PIXEL_ERROR_COUNT: i32 = PIXEL_COUNT * COLOR_COUNT;
+const MODE_WEIGHTED_PIXEL_ERROR_COUNT: i32 = CELL_COUNT * WEIGHTED_PIXEL_ERROR_COUNT;
 const MAX_POSITION_COUNT: i32 = CHAR_COUNT * PIXEL_COUNT;
 const OUTPUT_COUNT: i32 = CHAR_COUNT * COLOR_COUNT;
 const PAIR_DIFF_COUNT: i32 = COLOR_COUNT * COLOR_COUNT;
@@ -60,6 +61,7 @@ const EDGE_ALIGNMENT_WEIGHT: f64 = 14.0;
 // 64 pixels * 16 colors. Entry [pixel, color] answers:
 // "what does it cost if this pixel is rendered with this C64 color?"
 const weightedPixelErrors = new Float32Array(WEIGHTED_PIXEL_ERROR_COUNT);
+const modeWeightedPixelErrors = new Float32Array(MODE_WEIGHTED_PIXEL_ERROR_COUNT);
 const pairDiff = new Float32Array(PAIR_DIFF_COUNT);
 const thresholdBits = new Uint32Array(2);
 
@@ -130,6 +132,10 @@ export function getWeightedPixelErrorsPtr(): usize {
 
 export function getPairDiffPtr(): usize {
   return pairDiff.dataStart;
+}
+
+export function getModeWeightedPixelErrorsPtr(): usize {
+  return modeWeightedPixelErrors.dataStart;
 }
 
 export function getThresholdBitsPtr(): usize {
@@ -328,7 +334,7 @@ export function getStandardSolveTotalErrorPtr(): usize {
   return standardSolveTotalError.dataStart;
 }
 
-export function computeSetErrs(): void {
+function computeSetErrsFromBase(weightedPixelErrorBasePtr: usize): void {
   // SIMD lane filled with zeros so each character row starts clean.
   const zero = f32x4.splat(0);
 
@@ -346,7 +352,7 @@ export function computeSetErrs(): void {
     const end = positionOffsets[ch + 1];
     for (let i: i32 = start; i < end; i++) {
       // Jump to the chosen source pixel's 16-color error row.
-      const inPtr: usize = weightedPixelErrors.dataStart + (<usize>((<i32>flatPositions[i]) << 4) << 2);
+      const inPtr: usize = weightedPixelErrorBasePtr + (<usize>((<i32>flatPositions[i]) << 4) << 2);
 
       // Accumulate the 16 color costs 4 at a time. This is the hot loop that
       // replaces the JS typed-array summation used by candidate scoring.
@@ -356,6 +362,16 @@ export function computeSetErrs(): void {
       v128.store(outPtr + 48, f32x4.add(v128.load(outPtr + 48), v128.load(inPtr + 48)));
     }
   }
+}
+
+export function computeSetErrs(): void {
+  computeSetErrsFromBase(weightedPixelErrors.dataStart);
+}
+
+export function computeModeSetErrs(cellIndex: i32): void {
+  computeSetErrsFromBase(
+    modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * WEIGHTED_PIXEL_ERROR_COUNT) << 2)
+  );
 }
 
 export function computeHammingDistances(): void {

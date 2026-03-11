@@ -18,6 +18,8 @@ type McmKernelExports = {
   getWeightedPixelErrorsPtr(): number;
   getWeightedPairErrorsPtr(): number;
   getPairDiffPtr(): number;
+  getModeWeightedPixelErrorsPtr(): number;
+  getModeWeightedPairErrorsPtr(): number;
   getThresholdMasksPtr(): number;
   getPositionOffsetsPtr(): number;
   getFlatPositionsPtr(): number;
@@ -37,6 +39,7 @@ type McmKernelExports = {
   getOutputBitPairErrsPtr(): number;
   getOutputHammingPtr(): number;
   computeMatrices(): void;
+  computeModeMatrices(cellIndex: number): void;
   computeHammingDistances(): void;
 };
 
@@ -44,6 +47,11 @@ type McmKernelImports = WebAssembly.Imports & {
   env: {
     abort(message?: number, fileName?: number, line?: number, column?: number): never;
   };
+};
+
+type ResidentModeMcmCell = {
+  weightedPixelErrors: Float32Array;
+  weightedPairErrors?: Float32Array;
 };
 
 export interface McmWasmKernelCreateResult {
@@ -90,8 +98,11 @@ export class McmWasmKernel {
   private readonly exports: McmKernelExports;
   private loadedContext: McmKernelContext | null = null;
   private loadedPairDiff: Float64Array | null = null;
+  private loadedModeCells: ArrayLike<ResidentModeMcmCell> | null = null;
   private weightedPixelErrorsView: Float32Array;
   private weightedPairErrorsView: Float32Array;
+  private modeWeightedPixelErrorsView: Float32Array;
+  private modeWeightedPairErrorsView: Float32Array;
   private pairDiffView: Float32Array;
   private thresholdMasksView: Uint32Array;
   private positionOffsetsView: Int32Array;
@@ -107,6 +118,8 @@ export class McmWasmKernel {
     this.exports = exports;
     this.weightedPixelErrorsView = new Float32Array(exports.memory.buffer, exports.getWeightedPixelErrorsPtr(), 64 * 16);
     this.weightedPairErrorsView = new Float32Array(exports.memory.buffer, exports.getWeightedPairErrorsPtr(), 32 * 16);
+    this.modeWeightedPixelErrorsView = new Float32Array(exports.memory.buffer, exports.getModeWeightedPixelErrorsPtr(), 40 * 25 * 64 * 16);
+    this.modeWeightedPairErrorsView = new Float32Array(exports.memory.buffer, exports.getModeWeightedPairErrorsPtr(), 40 * 25 * 32 * 16);
     this.pairDiffView = new Float32Array(exports.memory.buffer, exports.getPairDiffPtr(), 16 * 16);
     this.thresholdMasksView = new Uint32Array(exports.memory.buffer, exports.getThresholdMasksPtr(), 4);
     this.positionOffsetsView = new Int32Array(exports.memory.buffer, exports.getPositionOffsetsPtr(), 257);
@@ -156,6 +169,35 @@ export class McmWasmKernel {
       setErrs: this.outputSetErrsView,
       bitPairErrs: this.outputBitPairErrsView,
     };
+  }
+
+  computeMatricesForModeCell(cellIndex: number, context: McmKernelContext) {
+    this.ensureContext(context);
+    this.exports.computeModeMatrices(cellIndex);
+    return {
+      setErrs: this.outputSetErrsView,
+      bitPairErrs: this.outputBitPairErrsView,
+    };
+  }
+
+  preloadModeCellErrors(cells: ArrayLike<ResidentModeMcmCell>) {
+    if (this.loadedModeCells === cells) {
+      return;
+    }
+
+    for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+      const cell = cells[cellIndex];
+      if (!cell.weightedPairErrors) {
+        throw new Error('Missing MCM weighted pair data for resident WASM upload.');
+      }
+      this.modeWeightedPixelErrorsView.set(cell.weightedPixelErrors, cellIndex * 64 * 16);
+      this.modeWeightedPairErrorsView.set(cell.weightedPairErrors, cellIndex * 32 * 16);
+    }
+    this.loadedModeCells = cells;
+  }
+
+  preloadPairDiff(pairDiff: Float64Array) {
+    this.ensurePairDiff(pairDiff);
   }
 
   computeHammingDistances(thresholdMasks: Uint32Array, pairDiff: Float64Array, context: McmKernelContext): Uint8Array {

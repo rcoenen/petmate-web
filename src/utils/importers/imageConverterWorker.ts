@@ -142,9 +142,16 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
 
     if (message.type === 'start-request') {
       let standardWasmSession: StandardWasmRequestSession | undefined;
-      if (state.scoringKernel instanceof BinaryWasmKernel && state.enabledModes.has('standard')) {
+      if (state.scoringKernel instanceof BinaryWasmKernel) {
         const metrics = getStandardMetrics(message.settings.paletteId);
-        standardWasmSession = state.scoringKernel.beginStandardRequest(message.preprocessed, metrics.pairDiff);
+        if (state.enabledModes.has('standard')) {
+          standardWasmSession = state.scoringKernel.beginStandardRequest(message.preprocessed, metrics.pairDiff);
+        } else {
+          state.scoringKernel.preloadStandardState(message.preprocessed, metrics.pairDiff);
+        }
+      }
+      if (state.mcmScoringKernel instanceof McmWasmKernel) {
+        state.mcmScoringKernel.preloadPairDiff(getModeMetrics(message.settings.paletteId).pairDiff);
       }
       state.requestData.set(message.requestId, {
         preprocessed: message.preprocessed,

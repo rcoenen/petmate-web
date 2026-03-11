@@ -1303,6 +1303,7 @@ function vBoundaryMeanOffset(cy: number, cx: number): number {
 
 function buildBinaryBestErrorByBackground(
   cell: SourceCellData,
+  cellIndex: number,
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
@@ -1333,7 +1334,7 @@ function buildBinaryBestErrorByBackground(
     return best;
   }
 
-  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel);
+  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel, cellIndex);
 
   for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
     const ch = candidateScreencodes[charIndex];
@@ -1363,6 +1364,7 @@ function buildBinaryBestErrorByBackground(
 
 function buildBinaryCandidatePool(
   cell: SourceCellData,
+  cellIndex: number,
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
@@ -1425,7 +1427,7 @@ function buildBinaryCandidatePool(
     )];
   }
 
-  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel);
+  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel, cellIndex);
 
   for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
     const ch = candidateScreencodes[charIndex];
@@ -1510,8 +1512,18 @@ type BinaryCellScoringTables = {
   csfPenaltyByChar: Float32Array;
 };
 
+type ResidentBinaryModeCell = Pick<SourceCellData, 'weightedPixelErrors'>;
+type ResidentMcmModeCell = Pick<SourceCellData, 'weightedPixelErrors' | 'weightedPairErrors'>;
+
 export interface BinaryCandidateScoringKernel {
   computeSetErrs(weightedPixelErrors: Float32Array, context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets'>): Float32Array;
+  preloadModeCellErrors?(
+    cells: ArrayLike<ResidentBinaryModeCell>
+  ): void;
+  computeSetErrsForModeCell?(
+    cellIndex: number,
+    context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets'>
+  ): Float32Array;
   computeHammingDistances?(
     thresholdLo: number,
     thresholdHi: number,
@@ -1524,6 +1536,16 @@ export interface McmCandidateScoringKernel {
   computeMatrices(
     weightedPixelErrors: Float32Array,
     weightedPairErrors: Float32Array,
+    context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets' | 'flatMcmPositions' | 'mcmPositionOffsets'>
+  ): {
+    setErrs: Float32Array;
+    bitPairErrs: Float32Array;
+  };
+  preloadModeCellErrors?(
+    cells: ArrayLike<ResidentMcmModeCell>
+  ): void;
+  computeMatricesForModeCell?(
+    cellIndex: number,
     context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets' | 'flatMcmPositions' | 'mcmPositionOffsets'>
   ): {
     setErrs: Float32Array;
@@ -1863,11 +1885,12 @@ function computeMcmMulticolorUsageBonus(
 
 function buildMcmCellScoringState(
   cell: SourceCellData,
+  cellIndex: number,
   context: CharsetConversionContext,
   settings: ConverterSettings,
   scoringKernel?: McmCandidateScoringKernel
 ): McmCellScoringState {
-  const { setErrs, bitPairErrs } = computeMcmMatrices(cell, context, scoringKernel);
+  const { setErrs, bitPairErrs } = computeMcmMatrices(cell, context, scoringKernel, cellIndex);
   return {
     setErrs: Float32Array.from(setErrs),
     bitPairErrs: Float32Array.from(bitPairErrs),
@@ -1975,10 +1998,13 @@ function computeMcmHammingDistances(
 function computeBinarySetErrMatrix(
   cell: SourceCellData,
   context: CharsetConversionContext,
-  scoringKernel?: BinaryCandidateScoringKernel
+  scoringKernel?: BinaryCandidateScoringKernel,
+  cellIndex?: number
 ): Float32Array | Float64Array {
   if (scoringKernel) {
-    const setErr = scoringKernel.computeSetErrs(cell.weightedPixelErrors, context);
+    const setErr = cellIndex !== undefined && scoringKernel.computeSetErrsForModeCell
+      ? scoringKernel.computeSetErrsForModeCell(cellIndex, context)
+      : scoringKernel.computeSetErrs(cell.weightedPixelErrors, context);
     if (ENABLE_WASM_DIAGNOSTICS && binaryPrecisionChecksRemaining > 0) {
       binaryPrecisionChecksRemaining--;
       logArrayDiff('Binary setErr matrix', computeBinarySetErrMatrixJs(cell, context), setErr);
@@ -1992,10 +2018,13 @@ function computeBinarySetErrMatrix(
 function computeMcmMatrices(
   cell: SourceCellData,
   context: CharsetConversionContext,
-  scoringKernel?: McmCandidateScoringKernel
+  scoringKernel?: McmCandidateScoringKernel,
+  cellIndex?: number
 ): { setErrs: Float32Array | Float64Array; bitPairErrs: Float32Array } {
   if (scoringKernel && cell.weightedPairErrors) {
-    const matrices = scoringKernel.computeMatrices(cell.weightedPixelErrors, cell.weightedPairErrors, context);
+    const matrices = cellIndex !== undefined && scoringKernel.computeMatricesForModeCell
+      ? scoringKernel.computeMatricesForModeCell(cellIndex, context)
+      : scoringKernel.computeMatrices(cell.weightedPixelErrors, cell.weightedPairErrors, context);
     if (ENABLE_WASM_DIAGNOSTICS && mcmPrecisionChecksRemaining > 0) {
       mcmPrecisionChecksRemaining--;
       const reference = computeMcmMatricesJs(cell, context);
@@ -2010,6 +2039,7 @@ function computeMcmMatrices(
 
 function buildMcmSampleSummary(
   cell: SourceCellData,
+  cellIndex: number,
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
@@ -2017,7 +2047,7 @@ function buildMcmSampleSummary(
   foregroundsByBackground: Uint8Array[],
   scoringKernel?: McmCandidateScoringKernel
 ): McmSampleSummary {
-  const state = buildMcmCellScoringState(cell, context, settings, scoringKernel);
+  const state = buildMcmCellScoringState(cell, cellIndex, context, settings, scoringKernel);
   const binaryTables = buildOwnedBinarySummaryScoringTables(
     cell.avgL,
     cell.avgA,
@@ -2681,6 +2711,7 @@ async function solveScreen(
 
 function buildBinaryCandidatePoolsForCellByBackground(
   cell: SourceCellData,
+  cellIndex: number,
   context: CharsetConversionContext,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
@@ -2772,7 +2803,7 @@ function buildBinaryCandidatePoolsForCellByBackground(
     return pools;
   }
 
-  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel);
+  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel, cellIndex);
   const edgeWeightSetErr = EDGE_MISMATCH_WEIGHT * cell.detailScore;
   const hasEdgesSetErr = cell.edgePixelCount > 0 && edgeWeightSetErr > 0.01;
   const eMaskLoSetErr = cell.edgeMaskLo;
@@ -2868,7 +2899,7 @@ async function buildBinaryCandidatePoolsByBackground(
   const candidatePoolsByBackground = backgrounds.map(() => new Array<ScreenCandidate[]>(cells.length));
   for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
     const cellPools = buildBinaryCandidatePoolsForCellByBackground(
-      cells[cellIndex], context, metrics, settings, charLimit, backgrounds, fgLimit, poolSize, scoringKernel, minContrastRatio
+      cells[cellIndex], cellIndex, context, metrics, settings, charLimit, backgrounds, fgLimit, poolSize, scoringKernel, minContrastRatio
     );
     for (let bi = 0; bi < backgrounds.length; bi++) {
       candidatePoolsByBackground[bi][cellIndex] = cellPools[bi];
@@ -2912,6 +2943,7 @@ async function buildMcmCellScoringStates(
   for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
     states[cellIndex] = buildMcmCellScoringState(
       cells[cellIndex],
+      cellIndex,
       context,
       settings,
       scoringKernel
@@ -2977,6 +3009,7 @@ async function buildMcmCandidatePoolsDirect(
   for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
     const state = buildMcmCellScoringState(
       cells[cellIndex],
+      cellIndex,
       context,
       settings,
       scoringKernel
@@ -3277,7 +3310,7 @@ async function solveEcmForCombo(
   const sampleIndices = getSampleIndices(analysis.rankedIndices, ECM_SAMPLE_COUNT);
   const tCoarse0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const sampleBestByCell = sampleIndices.map(cellIndex =>
-    buildBinaryBestErrorByBackground(analysis.cells[cellIndex], context, metrics, settings, 64, 16, scoringKernel)
+    buildBinaryBestErrorByBackground(analysis.cells[cellIndex], cellIndex, context, metrics, settings, 64, 16, scoringKernel)
   );
   const sampleSaliencyWeights = sampleIndices.map(cellIndex => analysis.cells[cellIndex].saliencyWeight);
 
@@ -3425,6 +3458,7 @@ async function solveMcmForCombo(
   const sampleSummaries = sampleIndices.map(cellIndex =>
     buildMcmSampleSummary(
       analysis.cells[cellIndex],
+      cellIndex,
       context,
       metrics,
       settings,
@@ -3610,6 +3644,10 @@ export async function solveModeOffsetWorker(
     offset.x,
     offset.y
   );
+  binaryScoringKernel?.preloadModeCellErrors?.(analysis.cells);
+  if (mode === 'mcm') {
+    mcmScoringKernel?.preloadModeCellErrors?.(analysis.cells);
+  }
   throwIfCancelled(shouldCancel);
 
   const best = await solveModeForAnalysis(

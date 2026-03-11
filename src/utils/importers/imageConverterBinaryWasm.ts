@@ -57,12 +57,16 @@ type BinaryKernelExports = {
   getStandardSolveBrightnessResidualsPtr(): number;
   getStandardSolveRepeatHPtr(): number;
   getStandardSolveRepeatVPtr(): number;
+  getStandardSolveCoherenceColorMasksPtr(): number;
+  getStandardSolveGlyphDirectionsPtr(): number;
   getStandardSolveEdgeLeftPtr(): number;
   getStandardSolveEdgeRightPtr(): number;
   getStandardSolveEdgeTopPtr(): number;
   getStandardSolveEdgeBottomPtr(): number;
   getStandardSolveHBoundaryDiffsPtr(): number;
   getStandardSolveVBoundaryDiffsPtr(): number;
+  getStandardCellDetailScoresPtr(): number;
+  getStandardCellGradientDirectionsPtr(): number;
   getStandardSolveSelectedIndicesPtr(): number;
   getStandardSolveTotalErrorPtr(): number;
   computeSetErrs(): void;
@@ -93,6 +97,7 @@ type BinaryKernelExports = {
     edgeWeight: number
   ): void;
   computeStandardSolveSelection(passCount: number): void;
+  computeStandardRefineSelection(colorPassCount: number, edgePassCount: number): void;
   finalizeStandardSolveSelection(): void;
 };
 
@@ -166,6 +171,15 @@ export interface StandardCandidateScoringKernel {
     hBoundaryDiffs: Float32Array,
     vBoundaryDiffs: Float32Array,
     passCount: number
+  ): Uint8Array;
+  refineSelectionWithPostPasses?(
+    selectedIndices: Uint8Array,
+    coherenceColorMasks: Uint16Array,
+    glyphDirections: Uint8Array,
+    detailScores: Float32Array,
+    gradientDirections: Uint8Array,
+    colorPassCount: number,
+    edgePassCount: number
   ): Uint8Array;
   finalizeSelection?(
     selectedIndices: Uint8Array
@@ -281,12 +295,16 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
   private standardSolveBrightnessResidualsView: Float64Array;
   private standardSolveRepeatHView: Float64Array;
   private standardSolveRepeatVView: Float64Array;
+  private standardSolveCoherenceColorMasksView: Uint16Array;
+  private standardSolveGlyphDirectionsView: Uint8Array;
   private standardSolveEdgeLeftView: Uint8Array;
   private standardSolveEdgeRightView: Uint8Array;
   private standardSolveEdgeTopView: Uint8Array;
   private standardSolveEdgeBottomView: Uint8Array;
   private standardSolveHBoundaryDiffsView: Float32Array;
   private standardSolveVBoundaryDiffsView: Float32Array;
+  private standardCellDetailScoresView: Float32Array;
+  private standardCellGradientDirectionsView: Uint8Array;
   private standardSolveSelectedIndicesView: Uint8Array;
   private standardSolveTotalErrorView: Float64Array;
   private readonly standardResidentLayout: StandardWasmResidentLayout;
@@ -463,6 +481,16 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.getStandardSolveRepeatVPtr(),
       40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
     );
+    this.standardSolveCoherenceColorMasksView = new Uint16Array(
+      exports.memory.buffer,
+      exports.getStandardSolveCoherenceColorMasksPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
+    );
+    this.standardSolveGlyphDirectionsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardSolveGlyphDirectionsPtr(),
+      40 * 25 * STANDARD_WASM_MAX_POOL_SIZE
+    );
     this.standardSolveEdgeLeftView = new Uint8Array(
       exports.memory.buffer,
       exports.getStandardSolveEdgeLeftPtr(),
@@ -492,6 +520,16 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.memory.buffer,
       exports.getStandardSolveVBoundaryDiffsPtr(),
       24 * 40 * 8
+    );
+    this.standardCellDetailScoresView = new Float32Array(
+      exports.memory.buffer,
+      exports.getStandardCellDetailScoresPtr(),
+      40 * 25
+    );
+    this.standardCellGradientDirectionsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardCellGradientDirectionsPtr(),
+      40 * 25
     );
     this.standardSolveSelectedIndicesView = new Uint8Array(
       exports.memory.buffer,
@@ -663,6 +701,24 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
     this.standardSolveHBoundaryDiffsView.set(hBoundaryDiffs);
     this.standardSolveVBoundaryDiffsView.set(vBoundaryDiffs);
     this.exports.computeStandardSolveSelection(passCount);
+    return this.standardSolveSelectedIndicesView;
+  }
+
+  refineSelectionWithPostPasses(
+    selectedIndices: Uint8Array,
+    coherenceColorMasks: Uint16Array,
+    glyphDirections: Uint8Array,
+    detailScores: Float32Array,
+    gradientDirections: Uint8Array,
+    colorPassCount: number,
+    edgePassCount: number
+  ): Uint8Array {
+    this.standardSolveSelectedIndicesView.set(selectedIndices);
+    this.standardSolveCoherenceColorMasksView.set(coherenceColorMasks);
+    this.standardSolveGlyphDirectionsView.set(glyphDirections);
+    this.standardCellDetailScoresView.set(detailScores);
+    this.standardCellGradientDirectionsView.set(gradientDirections);
+    this.exports.computeStandardRefineSelection(colorPassCount, edgePassCount);
     return this.standardSolveSelectedIndicesView;
   }
 

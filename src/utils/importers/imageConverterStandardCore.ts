@@ -191,6 +191,15 @@ export interface StandardCandidateScoringKernel {
     vBoundaryDiffs: Float32Array,
     passCount: number
   ): Uint8Array;
+  refineSelectionWithPostPasses?(
+    selectedIndices: Uint8Array,
+    coherenceColorMasks: Uint16Array,
+    glyphDirections: Uint8Array,
+    detailScores: Float32Array,
+    gradientDirections: Uint8Array,
+    colorPassCount: number,
+    edgePassCount: number
+  ): Uint8Array;
   finalizeSelection?(
     selectedIndices: Uint8Array
   ): {
@@ -879,6 +888,8 @@ const _reusableSolveBaseErrors = new Float64Array(CELL_COUNT * 16);
 const _reusableSolveBrightnessResiduals = new Float64Array(CELL_COUNT * 16);
 const _reusableSolveRepeatH = new Float64Array(CELL_COUNT * 16);
 const _reusableSolveRepeatV = new Float64Array(CELL_COUNT * 16);
+const _reusableSolveCoherenceColorMasks = new Uint16Array(CELL_COUNT * 16);
+const _reusableSolveGlyphDirections = new Uint8Array(CELL_COUNT * 16);
 const _reusableSolveEdgeLeft = new Uint8Array(CELL_COUNT * 16 * 8);
 const _reusableSolveEdgeRight = new Uint8Array(CELL_COUNT * 16 * 8);
 const _reusableSolveEdgeTop = new Uint8Array(CELL_COUNT * 16 * 8);
@@ -1589,7 +1600,7 @@ function trySolveSelectionWithKernel(
   candidatePools: ScreenCandidate[][],
   analysis: SourceAnalysis,
   scoringKernel?: StandardCandidateScoringKernel
-): { selectedIndices: Int32Array; selected: ScreenCandidate[] } | null {
+): { selectedIndices: Int32Array; selected: ScreenCandidate[]; refinementInKernel: boolean } | null {
   if (!scoringKernel?.solveSelectionWithNeighborPasses) {
     return null;
   }
@@ -1609,6 +1620,8 @@ function trySolveSelectionWithKernel(
       _reusableSolveBrightnessResiduals[flatIndex] = candidate.brightnessResidual;
       _reusableSolveRepeatH[flatIndex] = candidate.repeatH;
       _reusableSolveRepeatV[flatIndex] = candidate.repeatV;
+      _reusableSolveCoherenceColorMasks[flatIndex] = candidate.coherenceColorMask;
+      _reusableSolveGlyphDirections[flatIndex] = candidate.glyphDirection;
       _reusableSolveEdgeLeft.set(candidate.edgeLeft, edgeBase);
       _reusableSolveEdgeRight.set(candidate.edgeRight, edgeBase);
       _reusableSolveEdgeTop.set(candidate.edgeTop, edgeBase);
@@ -1632,17 +1645,32 @@ function trySolveSelectionWithKernel(
     analysis.vBoundaryDiffs,
     SCREEN_SOLVE_PASSES
   );
+  const refinedSelectedIndices = scoringKernel.refineSelectionWithPostPasses
+    ? scoringKernel.refineSelectionWithPostPasses(
+        wasmSelectedIndices,
+        _reusableSolveCoherenceColorMasks,
+        _reusableSolveGlyphDirections,
+        analysis.detailScores,
+        analysis.gradientDirections,
+        COLOR_COHERENCE_PASSES,
+        EDGE_CONTINUITY_PASSES
+      )
+    : wasmSelectedIndices;
 
   const selectedIndices = new Int32Array(CELL_COUNT);
   const selected = new Array<ScreenCandidate>(CELL_COUNT);
   for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
     const pool = candidatePools[cellIndex];
-    const selectedIndex = Math.min(pool.length - 1, wasmSelectedIndices[cellIndex] ?? 0);
+    const selectedIndex = Math.min(pool.length - 1, refinedSelectedIndices[cellIndex] ?? 0);
     selectedIndices[cellIndex] = selectedIndex;
     selected[cellIndex] = pool[selectedIndex];
   }
 
-  return { selectedIndices, selected };
+  return {
+    selectedIndices,
+    selected,
+    refinementInKernel: Boolean(scoringKernel.refineSelectionWithPostPasses),
+  };
 }
 
 function computeCellCost(
@@ -1833,8 +1861,10 @@ async function solveScreen(
     }
   }
 
-  runColorCoherencePass(candidatePools, selectedIndices, selected, analysis, metrics);
-  runEdgeContinuityPass(candidatePools, selectedIndices, selected, analysis, metrics);
+  if (!wasmSelection?.refinementInKernel) {
+    runColorCoherencePass(candidatePools, selectedIndices, selected, analysis, metrics);
+    runEdgeContinuityPass(candidatePools, selectedIndices, selected, analysis, metrics);
+  }
 
   if (scoringKernel?.finalizeSelection) {
     for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {

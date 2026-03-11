@@ -175,10 +175,10 @@ All constants in `imageConverterStandardCore.ts`:
 11. **Expand dedicated MCM tuning scenario sets** — Baselines now exist for the shared six-fixture set; next step is richer MCM-specific tuning scenarios rather than basic mode coverage
 
 ### Phase 6 — WASM-First Engine Migration
-12. **Standard full solver core in WASM** — **PARTIAL**. Resident state, host API, coarse background ranking, candidate scoring/pool construction, iterative solve passes, finalization, and wildcard admission are in WASM. Remaining tail: the last Standard refinement/post-pass logic
+12. **Standard full solver core in WASM** — **DONE**. Resident state, host API, coarse background ranking, candidate scoring/pool construction, iterative solve passes, refinement/post-passes, finalization, and wildcard admission are in WASM for Standard
 13. **ECM/MCM full solver cores in WASM** — Move register/triple ranking, legal hires-within-MCM solving, and final cell assignment into WASM
 14. **Resident solver state in WASM memory** — **PARTIAL**. Standard source planes, pairDiff/LUT data, candidate buffers, and screen-state buffers are resident in WASM. Equivalent ECM/MCM residency remains
-15. **Progress/result bridge + JS fallback reduction** — **PARTIAL**. Standard progress/result bridging exists, but JS still owns the last Standard tail and all ECM/MCM solving
+15. **Progress/result bridge + JS fallback reduction** — **PARTIAL**. Standard progress/result bridging exists and the Standard tail now runs in WASM, but the JS fallback remains for safety and ECM/MCM solving still lives outside the WASM-first path
 
 ### Performance (Phase 5 groundwork)
 16. **WASM kernel performance** — Standard is now materially faster on the WASM-first path. Exact benchmark on the accepted six-fixture Standard set:

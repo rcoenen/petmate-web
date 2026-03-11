@@ -707,7 +707,13 @@ function formatDelta(value, lowerBetter = false) {
 
 function stripVolatileSummaryFields(summary) {
   if (!summary) return summary;
-  const { conversionMs, conversionSeconds, ...stable } = summary;
+  const {
+    accelerationMode,
+    accelerationBackend,
+    conversionMs,
+    conversionSeconds,
+    ...stable
+  } = summary;
   return stable;
 }
 
@@ -721,6 +727,28 @@ function formatModeLabel(mode) {
       return 'MCM (Multicolor Mode)';
     default:
       return String(mode);
+  }
+}
+
+function formatAccelerationMode(mode) {
+  switch (mode) {
+    case 'js':
+      return 'JS ONLY';
+    case 'wasm':
+      return 'WASM ONLY';
+    default:
+      return 'AUTO';
+  }
+}
+
+function formatAccelerationBackend(backend) {
+  switch (backend) {
+    case 'wasm':
+      return 'WASM';
+    case 'js':
+      return 'JS fallback';
+    default:
+      return 'unknown';
   }
 }
 
@@ -788,6 +816,12 @@ async function generateComparisonHtml(scenarios) {
       }
       if (summary.conversionSeconds != null) {
         s += '<tr><td class="cl">time s</td><td>' + summary.conversionSeconds.toFixed(3) + '</td></tr>';
+      }
+      if (summary.accelerationBackend) {
+        s += '<tr><td class="cl">rendered by</td><td>' + formatAccelerationBackend(summary.accelerationBackend) + '</td></tr>';
+      }
+      if (summary.accelerationMode) {
+        s += '<tr><td class="cl">request</td><td>' + formatAccelerationMode(summary.accelerationMode) + '</td></tr>';
       }
       const q = summary.imageQuality;
       if (q) {
@@ -869,7 +903,7 @@ async function generateComparisonHtml(scenarios) {
     '</head>',
     '<body>',
     '<h1>TRUSKI3000 Visual Comparison</h1>',
-    '<p class="subtitle">Generated ' + timestamp + ' | Baseline vs Latest</p>',
+    '<p class="subtitle">Generated ' + timestamp + ' | Baseline vs Latest | Latest cards show the actual render backend when available</p>',
     scenarioHtml,
     '</body>',
     '</html>',

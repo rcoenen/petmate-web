@@ -51,6 +51,10 @@ const WILDCARD_MAX_ADMITTED: i32 = 2;
 const BRIGHTNESS_DEBT_WEIGHT: f64 = 64.0;
 const BRIGHTNESS_DEBT_DECAY: f64 = 0.6;
 const BRIGHTNESS_DEBT_CLAMP: f64 = 0.18;
+const COLOR_COHERENCE_MAX_DELTA: f64 = 18.0;
+const EDGE_CONTINUITY_MAX_DELTA: f64 = 12.0;
+const EDGE_ALIGNMENT_DETAIL_THRESHOLD: f64 = 0.45;
+const EDGE_ALIGNMENT_WEIGHT: f64 = 14.0;
 
 // The host copies one cell's weighted pixel-vs-palette error matrix here:
 // 64 pixels * 16 colors. Entry [pixel, color] answers:
@@ -107,12 +111,16 @@ const standardSolveBaseErrors = new Float64Array(STANDARD_SOLVE_CANDIDATE_COUNT)
 const standardSolveBrightnessResiduals = new Float64Array(STANDARD_SOLVE_CANDIDATE_COUNT);
 const standardSolveRepeatH = new Float64Array(STANDARD_SOLVE_CANDIDATE_COUNT);
 const standardSolveRepeatV = new Float64Array(STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardSolveCoherenceColorMasks = new Uint16Array(STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardSolveGlyphDirections = new Uint8Array(STANDARD_SOLVE_CANDIDATE_COUNT);
 const standardSolveEdgeLeft = new Uint8Array(STANDARD_SOLVE_EDGE_VALUE_COUNT);
 const standardSolveEdgeRight = new Uint8Array(STANDARD_SOLVE_EDGE_VALUE_COUNT);
 const standardSolveEdgeTop = new Uint8Array(STANDARD_SOLVE_EDGE_VALUE_COUNT);
 const standardSolveEdgeBottom = new Uint8Array(STANDARD_SOLVE_EDGE_VALUE_COUNT);
 const standardSolveHBoundaryDiffs = new Float32Array(H_BOUNDARY_DIFF_COUNT);
 const standardSolveVBoundaryDiffs = new Float32Array(V_BOUNDARY_DIFF_COUNT);
+const standardCellDetailScores = new Float32Array(CELL_COUNT);
+const standardCellGradientDirections = new Uint8Array(CELL_COUNT);
 const standardSolveSelectedIndices = new Uint8Array(CELL_COUNT);
 const standardSolveTotalError = new Float64Array(1);
 
@@ -272,6 +280,14 @@ export function getStandardSolveRepeatVPtr(): usize {
   return standardSolveRepeatV.dataStart;
 }
 
+export function getStandardSolveCoherenceColorMasksPtr(): usize {
+  return standardSolveCoherenceColorMasks.dataStart;
+}
+
+export function getStandardSolveGlyphDirectionsPtr(): usize {
+  return standardSolveGlyphDirections.dataStart;
+}
+
 export function getStandardSolveEdgeLeftPtr(): usize {
   return standardSolveEdgeLeft.dataStart;
 }
@@ -294,6 +310,14 @@ export function getStandardSolveHBoundaryDiffsPtr(): usize {
 
 export function getStandardSolveVBoundaryDiffsPtr(): usize {
   return standardSolveVBoundaryDiffs.dataStart;
+}
+
+export function getStandardCellDetailScoresPtr(): usize {
+  return standardCellDetailScores.dataStart;
+}
+
+export function getStandardCellGradientDirectionsPtr(): usize {
+  return standardCellGradientDirections.dataStart;
 }
 
 export function getStandardSolveSelectedIndicesPtr(): usize {
@@ -584,6 +608,143 @@ function computeStandardCandidateCost(cellIndex: i32, candidateIndex: i32): f64 
   return cost;
 }
 
+function countMaskBits(mask: u32): i32 {
+  return popcnt<u32>(mask);
+}
+
+function buildStandardNeighborCoherenceMask(cellIndex: i32): u32 {
+  const cx = cellIndex % GRID_WIDTH;
+  const cy = cellIndex / GRID_WIDTH;
+  let mask: u32 = 0;
+
+  if (cx > 0) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex - 1];
+    mask |= <u32>standardSolveCoherenceColorMasks[standardSolveFlatIndex(cellIndex - 1, neighborIndex)];
+  }
+  if (cx < GRID_WIDTH - 1) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex + 1];
+    mask |= <u32>standardSolveCoherenceColorMasks[standardSolveFlatIndex(cellIndex + 1, neighborIndex)];
+  }
+  if (cy > 0) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex - GRID_WIDTH];
+    mask |= <u32>standardSolveCoherenceColorMasks[standardSolveFlatIndex(cellIndex - GRID_WIDTH, neighborIndex)];
+  }
+  if (cy < GRID_HEIGHT - 1) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex + GRID_WIDTH];
+    mask |= <u32>standardSolveCoherenceColorMasks[standardSolveFlatIndex(cellIndex + GRID_WIDTH, neighborIndex)];
+  }
+
+  return mask;
+}
+
+function computeStandardDirectionalAlignmentBonus(
+  detailScore: f64,
+  cellDirection: u8,
+  glyphDirection: u8
+): f64 {
+  if (detailScore < EDGE_ALIGNMENT_DETAIL_THRESHOLD || cellDirection == 0) {
+    return 0.0;
+  }
+
+  const denom = 1.0 - EDGE_ALIGNMENT_DETAIL_THRESHOLD;
+  const detailStrength = Math.max(0.0, Math.min(1.0, (detailScore - EDGE_ALIGNMENT_DETAIL_THRESHOLD) / (denom > 1e-6 ? denom : 1e-6)));
+  if (glyphDirection == cellDirection) {
+    return EDGE_ALIGNMENT_WEIGHT * (0.35 + 0.65 * detailStrength);
+  }
+  if (glyphDirection == 0) {
+    return EDGE_ALIGNMENT_WEIGHT * 0.15 * detailStrength;
+  }
+  return 0.0;
+}
+
+function runStandardColorCoherencePass(passCount: i32): void {
+  for (let pass: i32 = 0; pass < passCount; pass++) {
+    for (let cellIndex: i32 = 0; cellIndex < CELL_COUNT; cellIndex++) {
+      const neighborMask = buildStandardNeighborCoherenceMask(cellIndex);
+      if (neighborMask == 0) continue;
+
+      const currentIndex = <i32>standardSolveSelectedIndices[cellIndex];
+      const currentFlatIndex = standardSolveFlatIndex(cellIndex, currentIndex);
+      const currentMask = <u32>standardSolveCoherenceColorMasks[currentFlatIndex];
+      const currentMissing = countMaskBits(currentMask & <u32>~neighborMask);
+      if (currentMissing == 0) continue;
+
+      const currentCost = computeStandardCandidateCost(cellIndex, currentIndex);
+      let bestIndex = currentIndex;
+      let bestMissing = currentMissing;
+      const count = <i32>standardSolveCounts[cellIndex];
+
+      for (let candidateIndex: i32 = 0; candidateIndex < count; candidateIndex++) {
+        if (candidateIndex == currentIndex) continue;
+        const flatIndex = standardSolveFlatIndex(cellIndex, candidateIndex);
+        const candidateMask = <u32>standardSolveCoherenceColorMasks[flatIndex];
+        if ((candidateMask & neighborMask) == 0) continue;
+
+        const candidateMissing = countMaskBits(candidateMask & <u32>~neighborMask);
+        if (candidateMissing >= bestMissing) continue;
+
+        const cost = computeStandardCandidateCost(cellIndex, candidateIndex);
+        if (cost <= currentCost + COLOR_COHERENCE_MAX_DELTA) {
+          bestIndex = candidateIndex;
+          bestMissing = candidateMissing;
+        }
+      }
+
+      if (bestIndex != currentIndex) {
+        standardSolveSelectedIndices[cellIndex] = <u8>bestIndex;
+      }
+    }
+  }
+}
+
+function runStandardEdgeContinuityPass(passCount: i32): void {
+  for (let pass: i32 = 0; pass < passCount; pass++) {
+    for (let cellIndex: i32 = 0; cellIndex < CELL_COUNT; cellIndex++) {
+      const detailScore = <f64>standardCellDetailScores[cellIndex];
+      const cellDirection = standardCellGradientDirections[cellIndex];
+      const currentIndex = <i32>standardSolveSelectedIndices[cellIndex];
+      const currentFlatIndex = standardSolveFlatIndex(cellIndex, currentIndex);
+      const currentAlignment = computeStandardDirectionalAlignmentBonus(
+        detailScore,
+        cellDirection,
+        standardSolveGlyphDirections[currentFlatIndex]
+      );
+      if (currentAlignment <= 0.0 && detailScore < EDGE_ALIGNMENT_DETAIL_THRESHOLD) continue;
+
+      const currentRawCost = computeStandardCandidateCost(cellIndex, currentIndex);
+      let bestIndex = currentIndex;
+      let bestAlignment = currentAlignment;
+      let bestAdjustedCost = currentRawCost - currentAlignment;
+      const count = <i32>standardSolveCounts[cellIndex];
+
+      for (let candidateIndex: i32 = 0; candidateIndex < count; candidateIndex++) {
+        if (candidateIndex == currentIndex) continue;
+        const flatIndex = standardSolveFlatIndex(cellIndex, candidateIndex);
+        const candidateAlignment = computeStandardDirectionalAlignmentBonus(
+          detailScore,
+          cellDirection,
+          standardSolveGlyphDirections[flatIndex]
+        );
+        if (candidateAlignment <= bestAlignment) continue;
+
+        const candidateRawCost = computeStandardCandidateCost(cellIndex, candidateIndex);
+        if (candidateRawCost > currentRawCost + EDGE_CONTINUITY_MAX_DELTA) continue;
+
+        const candidateAdjustedCost = candidateRawCost - candidateAlignment;
+        if (candidateAdjustedCost < bestAdjustedCost) {
+          bestIndex = candidateIndex;
+          bestAlignment = candidateAlignment;
+          bestAdjustedCost = candidateAdjustedCost;
+        }
+      }
+
+      if (bestIndex != currentIndex) {
+        standardSolveSelectedIndices[cellIndex] = <u8>bestIndex;
+      }
+    }
+  }
+}
+
 export function computeStandardCandidatePools(
   avgL: f64,
   avgA: f64,
@@ -792,6 +953,18 @@ export function computeStandardSolveSelection(passCount: i32): void {
 
       standardSolveSelectedIndices[cellIndex] = <u8>bestIndex;
     }
+  }
+}
+
+export function computeStandardRefineSelection(
+  colorPassCount: i32,
+  edgePassCount: i32
+): void {
+  if (colorPassCount > 0) {
+    runStandardColorCoherencePass(colorPassCount);
+  }
+  if (edgePassCount > 0) {
+    runStandardEdgeContinuityPass(edgePassCount);
   }
 }
 

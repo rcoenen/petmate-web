@@ -84,10 +84,10 @@ The capstone: move the full conversion engine into WASM while keeping JavaScript
 
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
-| 6.1 | **Standard full solver core in WASM** | ⚠️ Partial | Resident state, host API, coarse background ranking, candidate pools, iterative solve passes, finalization, and wildcard admission are now in WASM. Remaining tail: the last Standard refinement/post-pass logic still in JS |
+| 6.1 | **Standard full solver core in WASM** | ✅ Complete | Resident state, host API, coarse background ranking, candidate pools, iterative solve passes, refinement/post-passes, finalization, and wildcard admission now execute in WASM for Standard |
 | 6.2 | **ECM/MCM full solver cores in WASM** | ❌ Missing | ECM register solving, MCM triple solving, legal hires-within-MCM behavior, and final cell solves should run in WASM |
 | 6.3 | **Resident solver state in WASM memory** | ⚠️ Partial | Standard source planes, LUT data, candidate buffers, and screen buffers are resident. Equivalent ECM/MCM residency still missing |
-| 6.4 | **Progress/result bridge + fallback reduction** | ⚠️ Partial | Standard progress/result plumbing is already bridged through the worker/kernel boundary, but JS still owns the remaining Standard tail and all ECM/MCM solver logic |
+| 6.4 | **Progress/result bridge + fallback reduction** | ⚠️ Partial | Standard progress/result plumbing is bridged through the worker/kernel boundary, but the JS fallback still remains for safety and ECM/MCM solver logic still lives outside the WASM-first path |
 
 ### Measured Standard Benchmark
 
@@ -118,6 +118,6 @@ Weighted total:
 | 3. Perceptual Scoring | ✅ Complete | CSF, saliency-weighted palette solve, ECM re-solve, edge continuity, blend bonus, coverage extremity, wildcards |
 | 4. Output & Measurement | ✅ Complete | Full quality metrics suite + cellSSIM + test harness + per-cell metadata export + 4:3 preview |
 | 5. WASM Performance | ⚠️ ~60% | Groundwork is in place and Standard now shows a strong WASM win, but ECM/MCM still need parity/perf work and the hybrid path remains partly alive |
-| 6. WASM-First Migration | ⚠️ ~45% | Standard is largely migrated into WASM; ECM/MCM and the last Standard refinement tail remain |
+| 6. WASM-First Migration | ⚠️ ~55% | Standard is now fully WASM-first; ECM/MCM migration and broader fallback reduction remain |
 
-**Current engine state: ~90% of spec implemented with all major perceptual features active. Standard is now materially WASM-first and benchmarks 82.10% faster than JS-only; remaining work is ECM/MCM quality polish plus completing the ECM/MCM and refinement-side WASM migration.**
+**Current engine state: ~91% of spec implemented with all major perceptual features active. Standard is now fully WASM-first and benchmarks 82.10% faster than JS-only; remaining work is ECM/MCM quality polish plus the ECM/MCM-side WASM migration and fallback reduction.**

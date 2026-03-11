@@ -1391,90 +1391,92 @@ function buildBinaryCandidatePoolsForCell(
     }
   }
 
-  // Competitive wildcard admission: score low-contrast fg candidates and admit
-  // only those that are competitive with the best normal candidate or have
-  // clearly superior color-match (blend quality).
-  for (let bi = 0; bi < backgrounds.length; bi++) {
-    const bg = backgrounds[bi];
-    const pool = pools[bi];
-    const bestNormal = pool.length > 0 ? pool[0].baseError : Infinity;
-    const scoreThreshold = bestNormal * (1 + WILDCARD_SCORE_MARGIN);
-    let admitted = 0;
+  if (!scoringKernel?.computeCandidatePoolsByBackground) {
+    // Competitive wildcard admission: score low-contrast fg candidates and admit
+    // only those that are competitive with the best normal candidate or have
+    // clearly superior color-match (blend quality).
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      const bg = backgrounds[bi];
+      const pool = pools[bi];
+      const bestNormal = pool.length > 0 ? pool[0].baseError : Infinity;
+      const scoreThreshold = bestNormal * (1 + WILDCARD_SCORE_MARGIN);
+      let admitted = 0;
 
-    for (let fg = 0; fg < 16 && admitted < WILDCARD_MAX_ADMITTED; fg++) {
-      if (fg === bg) continue;
-      if (hasMinimumContrast(metrics, fg, bg)) continue; // already in main pass
+      for (let fg = 0; fg < 16 && admitted < WILDCARD_MAX_ADMITTED; fg++) {
+        if (fg === bg) continue;
+        if (hasMinimumContrast(metrics, fg, bg)) continue; // already in main pass
 
-      for (let charIndex = 0; charIndex < candidateScreencodes.length && admitted < WILDCARD_MAX_ADMITTED; charIndex++) {
-        const ch = candidateScreencodes[charIndex];
-        const rowBase = ch * 16;
-        const nSet = context.refSetCount[ch];
-        const sfCh = context.glyphAtlas.spatialFrequency[ch];
-        const csfPenalty = sfCh <= 0.1 ? csfPenaltyByChar[ch] : 0;
-        const csfBase = sfCh > 0.1 ? settings.csfWeight * sfCh * Math.max(0, 1 - cell.detailScore) : 0;
+        for (let charIndex = 0; charIndex < candidateScreencodes.length && admitted < WILDCARD_MAX_ADMITTED; charIndex++) {
+          const ch = candidateScreencodes[charIndex];
+          const rowBase = ch * 16;
+          const nSet = context.refSetCount[ch];
+          const sfCh = context.glyphAtlas.spatialFrequency[ch];
+          const csfPenalty = sfCh <= 0.1 ? csfPenaltyByChar[ch] : 0;
+          const csfBase = sfCh > 0.1 ? settings.csfWeight * sfCh * Math.max(0, 1 - cell.detailScore) : 0;
 
-        const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
-        if (bgErr >= scoreThreshold) continue;
+          const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
+          if (bgErr >= scoreThreshold) continue;
 
-        const mixIndex = binaryMixIndex(nSet, bg, fg);
-        const brightnessResidual = cell.avgL - metrics.binaryMixL[mixIndex];
-        const hueBonus = computeHuePreservationBonus(
-          cell.avgA,
-          cell.avgB,
-          metrics.binaryMixA[mixIndex],
-          metrics.binaryMixB[mixIndex]
-        );
-        const dA = cell.avgA - metrics.binaryMixA[mixIndex];
-        const dB = cell.avgB - metrics.binaryMixB[mixIndex];
-        const blendError =
-          brightnessResidual * brightnessResidual +
-          dA * dA +
-          dB * dB;
-        const blendQuality = 1 / (1 + blendError * BLEND_QUALITY_SHARPNESS);
-        const pairAdjustment =
-          settings.lumMatchWeight * brightnessResidual * brightnessResidual -
-          hueBonus -
-          BLEND_MATCH_WEIGHT * blendQuality;
-        let total =
-          bgErr +
-          setErrMatrix[rowBase + fg] +
-          csfPenalty +
-          pairAdjustment;
-
-        if (hasEdges) {
-          const [tLo, tHi] = getThresholdMask(fg, bg);
-          const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
-          const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
-          const edgeMismatches =
-            popcount32((mLo & eMaskLo) >>> 0) +
-            popcount32((mHi & eMaskHi) >>> 0);
-          total += edgeWeight * edgeMismatches;
-        }
-
-        if (sfCh > 0.1) {
-          total += csfBase * (1 - BLEND_CSF_RELIEF * blendQuality);
-        }
-
-        // Admission criteria: competitive score OR strong blend quality
-        const isCompetitive = total <= scoreThreshold;
-        const hasColorAdvantage = blendQuality >= WILDCARD_BLEND_QUALITY_MIN;
-        if (!isCompetitive && !hasColorAdvantage) continue;
-
-        if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
-          insertTopCandidate(
-            pool,
-            makeBinaryCandidate(
-              context,
-              ch,
-              bg,
-              fg,
-              total,
-              brightnessResidual,
-              metrics
-            ),
-            poolSize
+          const mixIndex = binaryMixIndex(nSet, bg, fg);
+          const brightnessResidual = cell.avgL - metrics.binaryMixL[mixIndex];
+          const hueBonus = computeHuePreservationBonus(
+            cell.avgA,
+            cell.avgB,
+            metrics.binaryMixA[mixIndex],
+            metrics.binaryMixB[mixIndex]
           );
-          admitted++;
+          const dA = cell.avgA - metrics.binaryMixA[mixIndex];
+          const dB = cell.avgB - metrics.binaryMixB[mixIndex];
+          const blendError =
+            brightnessResidual * brightnessResidual +
+            dA * dA +
+            dB * dB;
+          const blendQuality = 1 / (1 + blendError * BLEND_QUALITY_SHARPNESS);
+          const pairAdjustment =
+            settings.lumMatchWeight * brightnessResidual * brightnessResidual -
+            hueBonus -
+            BLEND_MATCH_WEIGHT * blendQuality;
+          let total =
+            bgErr +
+            setErrMatrix[rowBase + fg] +
+            csfPenalty +
+            pairAdjustment;
+
+          if (hasEdges) {
+            const [tLo, tHi] = getThresholdMask(fg, bg);
+            const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
+            const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
+            const edgeMismatches =
+              popcount32((mLo & eMaskLo) >>> 0) +
+              popcount32((mHi & eMaskHi) >>> 0);
+            total += edgeWeight * edgeMismatches;
+          }
+
+          if (sfCh > 0.1) {
+            total += csfBase * (1 - BLEND_CSF_RELIEF * blendQuality);
+          }
+
+          // Admission criteria: competitive score OR strong blend quality
+          const isCompetitive = total <= scoreThreshold;
+          const hasColorAdvantage = blendQuality >= WILDCARD_BLEND_QUALITY_MIN;
+          if (!isCompetitive && !hasColorAdvantage) continue;
+
+          if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
+            insertTopCandidate(
+              pool,
+              makeBinaryCandidate(
+                context,
+                ch,
+                bg,
+                fg,
+                total,
+                brightnessResidual,
+                metrics
+              ),
+              poolSize
+            );
+            admitted++;
+          }
         }
       }
     }

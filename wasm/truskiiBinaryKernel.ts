@@ -45,6 +45,9 @@ const BLEND_MATCH_WEIGHT: f64 = 3.0;
 const COVERAGE_EXTREMITY_WEIGHT: f64 = 20.0;
 const CONTINUITY_PENALTY: f64 = 0.14;
 const REPEAT_PENALTY: f64 = 28.0;
+const WILDCARD_SCORE_MARGIN: f64 = 0.15;
+const WILDCARD_BLEND_QUALITY_MIN: f64 = 0.7;
+const WILDCARD_MAX_ADMITTED: i32 = 2;
 const BRIGHTNESS_DEBT_WEIGHT: f64 = 64.0;
 const BRIGHTNESS_DEBT_DECAY: f64 = 0.6;
 const BRIGHTNESS_DEBT_CLAMP: f64 = 0.18;
@@ -445,11 +448,11 @@ function insertStandardPoolCandidate(
   ch: i32,
   fg: i32,
   score: f64
-): void {
+): bool {
   const poolBase = backgroundIndex * MAX_STANDARD_POOL_SIZE;
   let count = <i32>standardPoolCounts[backgroundIndex];
   if (count >= poolSize && score >= standardPoolScores[poolBase + poolSize - 1]) {
-    return;
+    return false;
   }
 
   let insertAt = count < poolSize ? count : poolSize - 1;
@@ -468,6 +471,7 @@ function insertStandardPoolCandidate(
   if (count < poolSize) {
     standardPoolCounts[backgroundIndex] = <u8>(count + 1);
   }
+  return true;
 }
 
 function clampBrightnessDebt(value: f64): f64 {
@@ -609,7 +613,6 @@ export function computeStandardCandidatePools(
       const bg = <i32>standardBackgrounds[bi];
       for (let fg: i32 = 0; fg < COLOR_COUNT; fg++) {
         if (fg == bg) continue;
-        if (<f64>pairDiff[fg * COLOR_COUNT + bg] < maxPairDiff * MIN_PAIR_DIFF_RATIO) continue;
         const pairIndex = bg * COLOR_COUNT + fg;
         standardThresholdLoScratch[pairIndex] = packStandardThresholdLo(fg, bg);
         standardThresholdHiScratch[pairIndex] = packStandardThresholdHi(fg, bg);
@@ -671,6 +674,70 @@ export function computeStandardCandidatePools(
         }
 
         insertStandardPoolCandidate(bi, clampedPoolSize, ch, fg, total);
+      }
+    }
+  }
+
+  for (let bi: i32 = 0; bi < backgroundCount; bi++) {
+    const bg = <i32>standardBackgrounds[bi];
+    const poolBase = bi * MAX_STANDARD_POOL_SIZE;
+    const normalCount = <i32>standardPoolCounts[bi];
+    const bestNormal = normalCount > 0 ? standardPoolScores[poolBase] : Infinity;
+    const scoreThreshold = bestNormal * (1.0 + WILDCARD_SCORE_MARGIN);
+    let admitted = 0;
+
+    for (let fg: i32 = 0; fg < COLOR_COUNT && admitted < WILDCARD_MAX_ADMITTED; fg++) {
+      if (fg == bg) continue;
+      if (<f64>pairDiff[fg * COLOR_COUNT + bg] >= maxPairDiff * MIN_PAIR_DIFF_RATIO) continue;
+
+      for (let candidateIndex: i32 = 0; candidateIndex < candidateCount && admitted < WILDCARD_MAX_ADMITTED; candidateIndex++) {
+        const ch = <i32>standardCandidateScreencodes[candidateIndex];
+        const rowBase = ch << 4;
+        const nSet = standardRefSetCount[ch];
+        const sf = <f64>standardGlyphSpatialFrequency[ch];
+        const csfPenalty = sf <= 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
+        const csfBase = sf > 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
+        const bgErr = <f64>standardTotalErrByColor[bg] - <f64>outputSetErrs[rowBase + bg];
+        if (bgErr >= scoreThreshold) continue;
+
+        const mixIndex = ((nSet * COLOR_COUNT) + bg) * COLOR_COUNT + fg;
+        const lumDiff = avgL - standardBinaryMixL[mixIndex];
+        const dL = lumDiff;
+        const dA = avgA - standardBinaryMixA[mixIndex];
+        const dB = avgB - standardBinaryMixB[mixIndex];
+        const blendError = dL * dL + dA * dA + dB * dB;
+        const blendQuality = 1.0 / (1.0 + blendError * BLEND_QUALITY_SHARPNESS);
+        const pairAdjustment = lumMatchWeight * lumDiff * lumDiff - BLEND_MATCH_WEIGHT * blendQuality;
+
+        let total =
+          bgErr +
+          <f64>outputSetErrs[rowBase + fg] +
+          csfPenalty +
+          pairAdjustment;
+
+        if (csfBase > 0.0) {
+          total += csfBase * (1.0 - BLEND_CSF_RELIEF * blendQuality);
+        }
+
+        if (hasEdges) {
+          const pairIndex = bg * COLOR_COUNT + fg;
+          const thresholdLo = standardThresholdLoScratch[pairIndex];
+          const thresholdHi = standardThresholdHiScratch[pairIndex];
+          const mismatchLo = packedBinaryGlyphLo[ch] ^ thresholdLo;
+          const mismatchHi = packedBinaryGlyphHi[ch] ^ thresholdHi;
+          const edgeMismatches =
+            <f64>(
+              popcnt<u32>(mismatchLo & edgeMaskLo) +
+              popcnt<u32>(mismatchHi & edgeMaskHi)
+            );
+          total += edgeWeight * edgeMismatches;
+        }
+
+        if (total > scoreThreshold && blendQuality < WILDCARD_BLEND_QUALITY_MIN) continue;
+
+        if (insertStandardPoolCandidate(bi, clampedPoolSize, ch, fg, total)) {
+          admitted += 1;
+        }
       }
     }
   }

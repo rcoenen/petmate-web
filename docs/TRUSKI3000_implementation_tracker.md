@@ -211,6 +211,13 @@ All constants in `imageConverterStandardCore.ts`:
 - The direct-batch path lowered the isolated `skeletor` preview capture from `22180.7ms` to `18562.5ms` (`16.3%` faster).
 - Guard capture `slayer_multi_color.png` also stayed byte-identical to the current output (`previewHash c908193137239a6acffe8f54dc1440c26be6aeb60b755c8112bdd84e2102f9c3`, `screencodesHash 1f872faecfc35f61c43df10a5d9e368f816298f9ebc501e8e7ac7bc1fa6a6dac`, `colorsHash b78f1d1b05ec3c54eb770ed475b583cecd52b5738d38de22e96512dbcd0b09fa`, `backgroundColor 0`, `mcmSharedColors [1,3]`, `qualityMeanDeltaE 0.13418811408393724`).
 
+### CODEX: MCM lower-bound pruning (2026-03-11)
+- The next exact-preserving speed slice was not another data-path rewrite. It tightened the existing lower bounds inside the WASM MCM triple ranker and pool scorer so clearly losing candidates are rejected before the expensive fg/luma/hue calculations run.
+- The stronger hires bound now includes fixed nonnegative terms (`bgErr + csfPenalty + hiresPenalty`), and the stronger multicolor bound includes fixed bonuses safely (`2 * fixedErr + csfPenalty - multicolorUsageBonus - maxHueBonus`). These bounds only skip work when a candidate cannot beat the current best/pool floor, so they do not change winners.
+- Targeted validation on `skeletor` under `current-defaults` and `wasm` stayed byte-identical to the direct-batch baseline (`previewHash e3d6f78de4e62b4d7b23d0551d820cd65229e9051dd0e21161ad4fac764a71be`, `screencodesHash 3e6523d87875761e6c6c136ce0d9e5e8211655a909a354bdb7bea2e82d3530a4`, `colorsHash 880d4f4b2cb276b3d966caf6b56cdab8485dca1bcc7bcfc6100c5e4dac8907e3`, preview diff `0` pixels).
+- On that same isolated preview capture, `conversionMs` improved from `18562.5ms` to `14083.7ms` (`24.1%` faster).
+- Guard capture `slayer_multi_color.png` also stayed byte-identical to the direct-batch baseline (`previewHash c908193137239a6acffe8f54dc1440c26be6aeb60b755c8112bdd84e2102f9c3`, `screencodesHash 1f872faecfc35f61c43df10a5d9e368f816298f9ebc501e8e7ac7bc1fa6a6dac`, `colorsHash b78f1d1b05ec3c54eb770ed475b583cecd52b5738d38de22e96512dbcd0b09fa`) while lowering `conversionMs` from `21837.0ms` to `13705.2ms` (`37.2%` faster).
+
 ### Next: MCM Quality Tuning (port Standard innovations + MCM-specific)
 
 **Shared with ECM** (same changes benefit both — items 1, 3 above apply to MCM's hires-within-MCM candidates too):

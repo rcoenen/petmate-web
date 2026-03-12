@@ -435,7 +435,8 @@ function computeBestHiresCostByBackgroundForSample(
 
     for (let bg: i32 = 0; bg < COLOR_COUNT; bg++) {
       const bgErr = <f64>rankSampleTotalErrByColor[totalErrBase + bg] - <f64>outputSetErrs[hiresBase + bg];
-      if (bgErr >= rankBestHiresCostByBg[bg]) continue;
+      const hiresLowerBound = bgErr + csfPenalty + hiresPenalty;
+      if (hiresLowerBound >= rankBestHiresCostByBg[bg]) continue;
 
       for (let fg: i32 = 0; fg < 8; fg++) {
         if (fg == bg) continue;
@@ -518,6 +519,10 @@ export function rankModeTriples(
     const sourceChroma = Math.sqrt(avgA * avgA + avgB * avgB);
     const sourceHue = sourceChroma < 0.015 ? 0.0 : Math.atan2(avgB, avgA);
     const colorDemand = computeMcmColorDemandFromChroma(detailScore, sourceChroma);
+    const maxHueBonus =
+      mcmHuePreservationWeight > 0.0 && sourceChroma >= 0.015
+        ? mcmHuePreservationWeight * sourceChroma
+        : 0.0;
     let tripleIndex: i32 = 0;
 
     for (let bg: i32 = 0; bg < COLOR_COUNT; bg++) {
@@ -566,6 +571,8 @@ export function rankModeTriples(
               colorDemand,
               mcmMulticolorUsageBonusWeight
             );
+            const multicolorLowerBound = 2.0 * fixedErr + csfPenalty - multicolorUsageBonus - maxHueBonus;
+            if (multicolorLowerBound >= best) continue;
             const bp3Base = bpBase + 48;
 
             if (count3 == 0) {
@@ -682,6 +689,10 @@ function scoreModeCandidatePoolWithCurrentMatrices(
   const sourceChroma = Math.sqrt(avgA * avgA + avgB * avgB);
   const sourceHue = sourceChroma < 0.015 ? 0.0 : Math.atan2(avgB, avgA);
   const colorDemand = computeMcmColorDemandFromChroma(detailScore, sourceChroma);
+  const maxHueBonus =
+    mcmHuePreservationWeight > 0.0 && sourceChroma >= 0.015
+      ? mcmHuePreservationWeight * sourceChroma
+      : 0.0;
   const hiresPenalty = computeMcmHiresColorPenaltyFromDemand(colorDemand, mcmHiresColorPenaltyWeight);
   let selectedCount: i32 = 0;
   resetPoolTopScores(poolSize);
@@ -693,8 +704,10 @@ function scoreModeCandidatePoolWithCurrentMatrices(
       : 0.0;
     const hiresBase = ch << 4;
     const bgErr = <f64>poolTotalErrByColor[bg] - <f64>outputSetErrs[hiresBase + bg];
+    const poolLimit = selectedCount < poolSize ? Infinity : poolTopScores[poolSize - 1];
+    const hiresLowerBound = bgErr + csfPenalty + hiresPenalty;
 
-    if (selectedCount < poolSize || bgErr < poolTopScores[poolSize - 1]) {
+    if (hiresLowerBound < poolLimit) {
       const nSet = rankRefSetCount[ch];
       for (let fg: i32 = 0; fg < 8; fg++) {
         if (!rankHasContrast(fg, bg)) continue;
@@ -716,7 +729,7 @@ function scoreModeCandidatePoolWithCurrentMatrices(
       <f64>outputBitPairErrs[bpBase + 16 + mc1] +
       <f64>outputBitPairErrs[bpBase + 32 + mc2];
 
-    if (selectedCount < poolSize || 2.0 * fixedErr < poolTopScores[poolSize - 1]) {
+    if (2.0 * fixedErr < poolLimit) {
       const countsBase = ch * 4;
       const count0 = <f64>rankRefMcmBpCounts[countsBase];
       const count1 = <f64>rankRefMcmBpCounts[countsBase + 1];
@@ -742,6 +755,10 @@ function scoreModeCandidatePoolWithCurrentMatrices(
         colorDemand,
         mcmMulticolorUsageBonusWeight
       );
+      const multicolorLowerBound = 2.0 * fixedErr + csfPenalty - multicolorUsageBonus - maxHueBonus;
+      if (multicolorLowerBound >= poolLimit) {
+        continue;
+      }
       if (count3 == 0) {
         const renderedL = fixedL / <f64>PAIR_COUNT;
         const renderedA = fixedA / <f64>PAIR_COUNT;

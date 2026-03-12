@@ -25,16 +25,18 @@ const manifestPath = path.resolve(harnessRoot, 'manifest.json');
 const benchmarkOutputPath = path.resolve(outputRoot, 'benchmarks', 'latest.json');
 const parityOutputPath = path.resolve(outputRoot, 'parity', 'latest.json');
 const validationOutputPath = path.resolve(outputRoot, 'validation', 'latest.json');
+const gallerySourceIndex = process.argv.indexOf('--source');
+const gallerySource = gallerySourceIndex >= 0 ? process.argv[gallerySourceIndex + 1] ?? 'baselines' : 'baselines';
 const preferredHarnessPort = 4173;
 const progressLogPrefix = '[TRUSKI_PROGRESS] ';
 const backendLogPrefix = '[TRUSKI_BACKEND] ';
 const validAccelerationModes = ['wasm', 'js'];
 
 const command = process.argv[2] ?? 'compare';
-const validCommands = new Set(['record', 'compare', 'capture', 'benchmark', 'parity', 'validate']);
+const validCommands = new Set(['record', 'compare', 'capture', 'benchmark', 'parity', 'validate', 'gallery']);
 if (!validCommands.has(command)) {
   console.error(`Unknown command: ${command}`);
-  console.error('Usage: node scripts/truski3000-harness/run.mjs [record|compare|capture|benchmark|parity|validate]');
+  console.error('Usage: node scripts/truski3000-harness/run.mjs [record|compare|capture|benchmark|parity|validate|gallery]');
   process.exit(1);
 }
 
@@ -429,18 +431,21 @@ async function runKernelValidation(page) {
   });
 }
 
-function attachHarnessConsole(page) {
+function attachHarnessConsole(page, progressRenderer = null) {
   page.on('console', message => {
     const text = message.text();
 
     if (text.startsWith(progressLogPrefix)) {
       try {
         const payload = JSON.parse(text.slice(progressLogPrefix.length));
+        if (progressRenderer?.updateProgress(payload)) {
+          return;
+        }
         const detailSuffix = payload.detail ? ` - ${payload.detail}` : '';
         console.log(`Progress ${payload.fixture}: ${payload.stage} ${payload.pct}%${detailSuffix}`);
         return;
       } catch {
-        console.log(text);
+        progressRenderer?.log(text) ?? console.log(text);
         return;
       }
     }
@@ -448,20 +453,23 @@ function attachHarnessConsole(page) {
     if (text.startsWith(backendLogPrefix)) {
       try {
         const payload = JSON.parse(text.slice(backendLogPrefix.length));
+        if (progressRenderer?.updateBackend(payload)) {
+          return;
+        }
         console.log(
           `BACKEND ${payload.fixture} ${payload.mode}: actual=${String(payload.backend).toUpperCase()} ` +
           `requested=${formatRequestedAcceleration(payload.accelerationMode)}`
         );
         return;
       } catch {
-        console.log(text);
+        progressRenderer?.log(text) ?? console.log(text);
         return;
       }
     }
 
     // Pass through TruSkii diagnostic messages
     if (text.startsWith('[TruSkii')) {
-      console.log(text);
+      progressRenderer?.log(text) ?? console.log(text);
       return;
     }
   });
@@ -490,7 +498,7 @@ async function runBenchmarks(page, scenarios) {
     if (!resolvedProfile) {
       throw new Error(`Unknown harness profile for benchmark preset ${profile.id}: ${profile.profileId}`);
     }
-    for (const scenario of scenarios) {
+    for (const [scenarioIndex, scenario] of scenarios.entries()) {
       const scenarioSettings = resolveScenarioSettings(modeMatrix[scenario.mode], profile.profileId);
 
       for (const accelerationMode of accelerationModes) {
@@ -892,6 +900,337 @@ function formatAccelerationBackend(backend) {
   }
 }
 
+function formatModeShort(mode) {
+  switch (mode) {
+    case 'standard':
+      return 'STD';
+    case 'ecm':
+      return 'ECM';
+    case 'mcm':
+      return 'MCM';
+    default:
+      return String(mode).toUpperCase();
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function renderProgressBar(pct, width = 24) {
+  const normalized = clamp(Number.isFinite(pct) ? pct : 0, 0, 100);
+  const filled = Math.round((normalized / 100) * width);
+  return `[${'#'.repeat(filled)}${'-'.repeat(width - filled)}] ${normalized.toFixed(0).padStart(3, ' ')}%`;
+}
+
+function truncateText(value, maxLength) {
+  const text = String(value ?? '');
+  if (text.length <= maxLength) {
+    return text;
+  }
+  if (maxLength <= 1) {
+    return text.slice(0, maxLength);
+  }
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function createProgressRenderer() {
+  const interactive = Boolean(process.stdout.isTTY && process.stderr.isTTY);
+  let renderedLineCount = 0;
+  let totalScenarios = 0;
+  let completedScenarios = 0;
+  let currentScenario = null;
+  let lastBackend = null;
+
+  function clear() {
+    if (!interactive || renderedLineCount === 0) {
+      return;
+    }
+    process.stdout.write(`\x1b[${renderedLineCount}F`);
+    for (let index = 0; index < renderedLineCount; index++) {
+      process.stdout.write('\x1b[2K');
+      if (index < renderedLineCount - 1) {
+        process.stdout.write('\x1b[1B');
+      }
+    }
+    process.stdout.write(`\x1b[${renderedLineCount - 1}F`);
+    renderedLineCount = 0;
+  }
+
+  function emit(lines) {
+    if (!interactive) {
+      return;
+    }
+    clear();
+    const joined = lines.join('\n');
+    process.stdout.write(`${joined}\n`);
+    renderedLineCount = lines.length;
+  }
+
+  function render() {
+    if (!interactive || !currentScenario) {
+      return;
+    }
+    const scenarioPct = clamp(currentScenario.pct ?? 0, 0, 100);
+    const overallPct = totalScenarios > 0
+      ? ((completedScenarios + scenarioPct / 100) / totalScenarios) * 100
+      : 0;
+    const totalLine =
+      `Total    ${renderProgressBar(overallPct)}  ` +
+      `${Math.min(completedScenarios + 1, totalScenarios)}/${totalScenarios}  ` +
+      `${currentScenario.index + 1 < totalScenarios ? 'running' : 'finishing'}`;
+    const currentHeader =
+      `Current  ${formatModeShort(currentScenario.mode)}  ${currentScenario.fixture}  ` +
+      `${currentScenario.index + 1}/${totalScenarios}`;
+    const stageText = truncateText(
+      `${currentScenario.stage ?? 'Working'}${currentScenario.detail ? ` - ${currentScenario.detail}` : ''}`,
+      120
+    );
+    const currentLine = `${renderProgressBar(scenarioPct)}  ${stageText}`;
+    const backendLine = lastBackend
+      ? `Backend  actual=${formatAccelerationBackend(lastBackend.backend)}  requested=${formatRequestedAcceleration(lastBackend.accelerationMode)}`
+      : `Backend  requested=${formatRequestedAcceleration(accelerationFilter ?? 'wasm')}`;
+    emit([totalLine, currentHeader, currentLine, backendLine]);
+  }
+
+  function log(message) {
+    if (interactive) {
+      clear();
+    }
+    console.log(message);
+    render();
+  }
+
+  return {
+    startScenario(scenario, index, total) {
+      totalScenarios = total;
+      currentScenario = {
+        fixture: scenario.fixture,
+        mode: scenario.mode,
+        index,
+        pct: 0,
+        stage: 'Queued',
+        detail: '',
+      };
+      lastBackend = null;
+      render();
+    },
+    updateProgress(payload) {
+      if (!currentScenario || payload.fixture !== currentScenario.fixture) {
+        return false;
+      }
+      currentScenario = {
+        ...currentScenario,
+        pct: payload.pct ?? currentScenario.pct,
+        stage: payload.stage ?? currentScenario.stage,
+        detail: payload.detail ?? currentScenario.detail,
+      };
+      render();
+      return true;
+    },
+    updateBackend(payload) {
+      if (!currentScenario || payload.fixture !== currentScenario.fixture) {
+        return false;
+      }
+      lastBackend = payload;
+      render();
+      return true;
+    },
+    finishScenario(result) {
+      const summaries = Object.values(result.summaries).filter(Boolean);
+      const summary = summaries[0] ?? null;
+      const mode = currentScenario?.mode ?? Object.keys(result.summaries).find(key => result.summaries[key]) ?? 'unknown';
+      const fixture = currentScenario?.fixture ?? result.fixture;
+      const backend = summary?.accelerationBackend ? formatAccelerationBackend(summary.accelerationBackend) : 'unknown';
+      const elapsedMs = summary?.conversionMs ?? result.elapsedMs;
+      completedScenarios += 1;
+      currentScenario = null;
+      lastBackend = null;
+      if (interactive) {
+        clear();
+      }
+      console.log(
+        `Completed ${formatModeShort(mode)} ${fixture} in ${(elapsedMs / 1000).toFixed(2)}s` +
+        ` (${backend}) ${completedScenarios}/${totalScenarios}`
+      );
+    },
+    log,
+    flush() {
+      clear();
+    },
+    isInteractive() {
+      return interactive;
+    },
+  };
+}
+
+function safeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function slugify(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'gallery';
+}
+
+function resolveGallerySource() {
+  if (gallerySource === 'baselines') {
+    return {
+      label: 'Accepted Baselines',
+      sourceRoot: baselineDir,
+      previewPrefix: '../baselines',
+      modeDirPrefix: '../baselines',
+    };
+  }
+
+  const sourceName = gallerySource;
+  return {
+    label: `Output: ${sourceName}`,
+    sourceRoot: path.resolve(outputRoot, sourceName),
+    previewPrefix: sourceName,
+    modeDirPrefix: sourceName,
+  };
+}
+
+async function generateGalleryHtml(scenarios) {
+  const source = resolveGallerySource();
+  const rows = [];
+
+  for (const scenario of scenarios) {
+    const fixtureName = path.parse(scenario.fixture).name;
+    const summaryPath = path.resolve(source.sourceRoot, scenario.mode, fixtureName, 'summary.json');
+    const previewPath = path.resolve(source.sourceRoot, scenario.mode, fixtureName, 'preview.png');
+
+    let summary = null;
+    try {
+      summary = JSON.parse(await readFile(summaryPath, 'utf8'));
+    } catch {
+      summary = null;
+    }
+
+    rows.push({
+      fixture: scenario.fixture,
+      fixtureName,
+      mode: scenario.mode,
+      summary,
+      previewExists: Boolean(summary),
+      previewSrc: `${source.previewPrefix}/${scenario.mode}/${fixtureName}/preview.png`,
+      sourceSrc: `../fixtures/${scenario.fixture}`,
+    });
+  }
+
+  const grouped = new Map();
+  for (const row of rows) {
+    const existing = grouped.get(row.fixture) ?? [];
+    existing.push(row);
+    grouped.set(row.fixture, existing);
+  }
+
+  const fixtureSections = [...grouped.entries()].map(([fixture, fixtureRows]) => {
+    const orderedRows = fixtureRows.sort((a, b) => modeIds().indexOf(a.mode) - modeIds().indexOf(b.mode));
+    let html = '<section class="fixture">';
+    html += `<div class="fixture-head"><h2>${safeHtml(fixture)}</h2></div>`;
+    html += '<div class="fixture-grid">';
+    html += `<div class="card source-card"><img src="../fixtures/${safeHtml(fixture)}" alt="Source"><div class="card-title">Source</div></div>`;
+
+    for (const row of orderedRows) {
+      html += '<div class="card result-card">';
+      if (row.previewExists) {
+        html += `<img src="${safeHtml(row.previewSrc)}" alt="${safeHtml(formatModeLabel(row.mode))}">`;
+      } else {
+        html += '<div class="missing">Missing</div>';
+      }
+      html += `<div class="card-title">${safeHtml(formatModeLabel(row.mode))}</div>`;
+      if (row.summary) {
+        html += '<table class="card-table">';
+        html += `<tr><td class="cl">bg</td><td>${safeHtml(row.summary.backgroundColor)}</td></tr>`;
+        html += `<tr><td class="cl">charset</td><td>${safeHtml(row.summary.charset)}</td></tr>`;
+        if (row.summary.ecmBgColors && row.summary.ecmBgColors.length > 0) {
+          html += `<tr><td class="cl">ecm bgs</td><td>[${safeHtml(row.summary.ecmBgColors.join(', '))}]</td></tr>`;
+        }
+        if (row.summary.mcmSharedColors && row.summary.mcmSharedColors.some(color => color > 0)) {
+          html += `<tr><td class="cl">mcm shared</td><td>[${safeHtml(row.summary.mcmSharedColors.join(', '))}]</td></tr>`;
+        }
+        if (row.summary.conversionMs != null) {
+          html += `<tr><td class="cl">time ms</td><td>${safeHtml(row.summary.conversionMs.toFixed(2))}</td></tr>`;
+        }
+        if (row.summary.conversionSeconds != null) {
+          html += `<tr><td class="cl">time s</td><td>${safeHtml(row.summary.conversionSeconds.toFixed(3))}</td></tr>`;
+        }
+        if (row.summary.accelerationBackend) {
+          html += `<tr><td class="cl">backend</td><td>${safeHtml(formatAccelerationBackend(row.summary.accelerationBackend))}</td></tr>`;
+        }
+        if (row.summary.profileId) {
+          html += `<tr><td class="cl">profile</td><td>${safeHtml(row.summary.profileId)}</td></tr>`;
+        }
+        if (row.summary.imageQuality) {
+          const quality = row.summary.imageQuality;
+          html += `<tr><td class="cl">SSIM</td><td>${safeHtml(quality.ssim.toFixed(3))}</td></tr>`;
+          html += `<tr><td class="cl">meanΔE</td><td>${safeHtml(quality.meanDeltaE.toFixed(4))}</td></tr>`;
+          html += `<tr><td class="cl">p95ΔE</td><td>${safeHtml(quality.percentile95DeltaE.toFixed(4))}</td></tr>`;
+        }
+        html += '</table>';
+      } else {
+        html += '<div class="missing-meta">No summary.json found for this mode.</div>';
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    html += '</section>';
+    return html;
+  }).join('\n');
+
+  const reportName = runName ?? `${slugify(gallerySource)}-gallery`;
+  const reportPath = path.resolve(outputRoot, `${reportName}.html`);
+  const timestamp = new Date().toISOString().slice(0, 19);
+  const html = [
+    '<!DOCTYPE html>',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="utf-8">',
+    '<title>TRUSKI3000 Gallery</title>',
+    '<style>',
+    '* { box-sizing: border-box; }',
+    'body { margin: 0; padding: 24px; background: #16181c; color: #e9edf1; font-family: system-ui, sans-serif; }',
+    'h1 { margin: 0 0 6px; font-size: 1.45rem; }',
+    '.subtitle { margin: 0 0 24px; color: #98a2ad; font-size: 0.92rem; }',
+    '.fixture { margin-bottom: 28px; padding-bottom: 28px; border-bottom: 1px solid #2b3037; }',
+    '.fixture-head { margin-bottom: 12px; }',
+    '.fixture-head h2 { margin: 0; font-size: 1.05rem; }',
+    '.fixture-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; align-items: start; }',
+    '.card { background: #1e232a; border: 1px solid #2d333c; border-radius: 10px; overflow: hidden; min-height: 100%; }',
+    '.card img { width: 100%; aspect-ratio: 320 / 200; object-fit: cover; display: block; image-rendering: pixelated; background: #0f1114; }',
+    '.card-title { padding: 10px 12px 0; font-weight: 700; font-size: 0.95rem; }',
+    '.card-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; margin: 8px 0 12px; }',
+    '.card-table td { padding: 2px 12px; vertical-align: top; }',
+    '.card-table .cl { width: 78px; color: #98a2ad; }',
+    '.source-card { background: #15191f; }',
+    '.missing, .missing-meta { color: #98a2ad; padding: 24px 12px; }',
+    '.missing { min-height: 200px; display: grid; place-items: center; font-weight: 600; }',
+    '</style>',
+    '</head>',
+    '<body>',
+    '<h1>TRUSKI3000 Mode Gallery</h1>',
+    `<p class="subtitle">Generated ${safeHtml(timestamp)} | Source set: ${safeHtml(source.label)} | Modes: Standard, ECM, MCM</p>`,
+    fixtureSections,
+    '</body>',
+    '</html>',
+  ].join('\n');
+
+  await writeFile(reportPath, html, 'utf8');
+  console.log('Gallery: ' + reportPath);
+  return reportPath;
+}
+
 async function generateComparisonHtml(scenarios) {
   const uniqueModes = [...new Set(scenarios.map(scenario => scenario.mode))];
   const modeSuffix = uniqueModes.length === 1 ? uniqueModes[0] : 'multimode';
@@ -1194,6 +1533,12 @@ async function recordBaselines() {
 }
 
 async function main() {
+  if (command === 'gallery') {
+    const scenarios = await listScenarios();
+    await generateGalleryHtml(scenarios);
+    return;
+  }
+
   await syncFixturesToPublic();
   await rm(latestOutputDir, { recursive: true, force: true });
   await mkdir(latestOutputDir, { recursive: true });
@@ -1226,17 +1571,18 @@ async function main() {
   }
 
   const browser = await chromium.launch({ headless: true });
+  const progressRenderer = createProgressRenderer();
 
   try {
     const page = await browser.newPage();
-    attachHarnessConsole(page);
+    attachHarnessConsole(page, progressRenderer);
     await page.goto(harnessUrl, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => Boolean(window.__TRUSKI_HARNESS__));
 
-    console.log(`Harness server mode: ${serverMode}${skipBuild ? ' (reused build)' : ''}`);
     const scenarios = await listScenarios();
-    console.log(`Harness acceleration request: ${formatRequestedAcceleration()}`);
-    console.log(`Harness scenario timeout: ${scenarioTimeoutMs > 0 ? `${scenarioTimeoutMs}ms` : 'disabled'}`);
+    progressRenderer.log(`Harness server mode: ${serverMode}${skipBuild ? ' (reused build)' : ''}`);
+    progressRenderer.log(`Harness acceleration request: ${formatRequestedAcceleration()}`);
+    progressRenderer.log(`Harness scenario timeout: ${scenarioTimeoutMs > 0 ? `${scenarioTimeoutMs}ms` : 'disabled'}`);
     if (command === 'benchmark') {
       await runBenchmarks(page, scenarios);
       return;
@@ -1273,7 +1619,7 @@ async function main() {
       throw new Error(`Unknown harness profile: ${selectedProfileId}`);
     }
 
-    for (const scenario of scenarios) {
+    for (const [scenarioIndex, scenario] of scenarios.entries()) {
       const extraOverrides = {};
       if (saliencyOverride !== null && !isNaN(saliencyOverride)) {
         extraOverrides.saliencyAlpha = saliencyOverride;
@@ -1291,7 +1637,11 @@ async function main() {
         lumOverride !== null ? `lum=${lumOverride}` : '',
         csfOverride !== null ? `csf=${csfOverride}` : '',
       ].filter(Boolean).join(' ');
-      console.log(`Running ${scenario.mode} -> ${scenario.fixture} [${formatRequestedAcceleration()}]${overrideLabel ? ' ' + overrideLabel : ''}`);
+      progressRenderer.log(
+        `Running ${scenario.mode} -> ${scenario.fixture} [${formatRequestedAcceleration()}]` +
+        `${overrideLabel ? ' ' + overrideLabel : ''}`
+      );
+      progressRenderer.startScenario(scenario, scenarioIndex, scenarios.length);
       const result = await runHarnessFixture(
         page,
         scenario.fixture,
@@ -1299,6 +1649,7 @@ async function main() {
         accelerationFilter ?? 'wasm',
         selectedProfile.id
       );
+      progressRenderer.finishScenario(result);
       await writeRunArtifacts(result);
       printQualityScores(result);
       printCharacterUtilization(result);
@@ -1306,6 +1657,7 @@ async function main() {
 
     await generateComparisonHtml(scenarios);
   } finally {
+    progressRenderer.flush();
     await browser.close();
     stopHarnessServer();
   }

@@ -13,22 +13,12 @@ Petsciishop is our attempt to take the best ideas from across the C64 community,
 
 **Try it now:** [https://rcoenen.github.io/Petsciishop/](https://rcoenen.github.io/Petsciishop/)
 
-## The Story of TruSkii3000
-
-TruSkii3000 grew out of a pretty direct obsession: how good can a PETSCII image converter actually get if you keep pushing it instead of stopping at "retro enough"?
-
-The engine is our attempt to build a world-class PETSCII generator. It works inside the real limits of the Commodore 64: a fixed character grid, a tiny palette, strict VIC-II mode rules, shared colors, and constant tradeoffs between shape, contrast, texture, and color identity. The whole point is to squeeze the strongest possible image through those limits without losing what makes PETSCII look and feel right.
-
-Over time, that turned TruSkii3000 into a meeting point between old machine constraints and modern image science. It pulls together C64 screen behavior, PETSCII character analysis, perceptual color theory, luminance structure, saliency, screen-wide refinement, and a lot of hard-nosed search. The current engine runs its hot path in a WASM-first core so the quality work is not trapped behind slow browser-side experimentation.
-
-If you want the deeper technical write-up, start with [TRUSKI3000 Engine](docs/TRUSKI3000_Engine.md).
-
-If you want to see it in action, browse the [TruSkii3000 Samples](https://rcoenen.github.io/Petsciishop/demo/truski3000-samples/) page for side-by-side `Original / STD / ECM / MCM` outputs with recorded timings.
+Image conversion in Petsciishop is powered by TruSkii3000. Engine notes and sample outputs live on the [TruSkii3000 page](https://rcoenen.github.io/Petsciishop/demo/truski3000/).
 
 ## Features
 
 - **Runs in the browser** — no Electron, no server, just open the URL and start creating
-- **TruSkii3000 quality-first image-to-PETSCII engine** — perceptual color matching, saliency-weighted and screen-level character optimization, multiple C64 palettes. Supports Standard, ECM, and MCM modes with live previews
+- **Built-in image-to-PETSCII converter** — powered by TruSkii3000, with perceptual color matching, saliency-weighted screen optimization, multiple C64 palettes, and support for Standard, ECM, and MCM live previews
 - **Inspector tool** — hover over any cell to read its character and color; click to pick it up as your active drawing settings
 - **Per-screen palette support** — 9 industry-standard C64 palettes (Colodore, Pepto PAL/NTSC, VICE, and more), assignable per screen
 - **ECM (Extended Color Mode)** — full support with 2×2 background grid in the character picker

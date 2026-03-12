@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TruSkii3000</title>
+<style>
+* { box-sizing: border-box; }
+:root {
+  --bg: #0f1216;
+  --panel: #171d24;
+  --panel-2: #12171d;
+  --border: #2b333d;
+  --text: #eef3f7;
+  --muted: #98a5b3;
+  --accent: #9ed5b5;
+  --accent-2: #d7c17f;
+}
+body {
+  margin: 0;
+  padding: 28px;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top right, rgba(74, 112, 92, 0.28), transparent 28%),
+    radial-gradient(circle at top left, rgba(187, 152, 67, 0.18), transparent 22%),
+    var(--bg);
+  font-family: Georgia, "Times New Roman", serif;
+}
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+h1 {
+  margin: 0 0 10px;
+  font-size: 2.5rem;
+}
+.eyebrow {
+  margin: 0 0 16px;
+  color: var(--accent);
+  font-size: 0.88rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lede {
+  max-width: 860px;
+  margin: 0 0 28px;
+  color: var(--muted);
+  font-size: 1.08rem;
+  line-height: 1.65;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1.3fr 0.9fr;
+  gap: 18px;
+  align-items: start;
+}
+.panel {
+  background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+}
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+}
+.panel p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.panel p:last-child {
+  margin-bottom: 0;
+}
+.links {
+  display: grid;
+  gap: 12px;
+}
+.link-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.link-card:hover {
+  border-color: var(--accent);
+}
+.link-card strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 1rem;
+}
+.link-card span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+.fact {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.fact .k {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--accent-2);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.fact .v {
+  color: var(--text);
+  line-height: 1.45;
+}
+.footer {
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (max-width: 860px) {
+  body { padding: 18px; }
+  .grid { grid-template-columns: 1fr; }
+  .facts { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Inside Petsciishop</p>
+  <h1>TruSkii3000</h1>
+  <p class="lede">
+    TruSkii3000 is the image conversion engine inside Petsciishop. It is where the project concentrates its image-science work:
+    PETSCII character behavior, perceptual color matching, luminance structure, saliency, screen-wide refinement, and a WASM-first
+    search pipeline that can push Standard, ECM, and MCM outputs much harder than a simple nearest-match converter.
+  </p>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>What It Is</h2>
+      <p>
+        The job of TruSkii3000 is to take a source image and find the strongest legal C64 screen the machine can actually display.
+        That means dealing with a fixed 40x25 character grid, real VIC-II mode rules, a 16-color palette, shared global colors,
+        and constant tradeoffs between shape, contrast, texture, and color identity.
+      </p>
+      <p>
+        Over time, it has turned into a focused attempt to make the best PETSCII image converter we can build. The engine combines
+        C64-specific knowledge with modern perceptual color work and a lot of measured search, then keeps the hot path in WASM so the
+        deeper scoring and refinement passes stay practical in the browser.
+      </p>
+
+      <div class="facts">
+        <div class="fact">
+          <span class="k">Modes</span>
+          <span class="v">Standard, ECM, and MCM are all first-class conversion targets.</span>
+        </div>
+        <div class="fact">
+          <span class="k">Engine Shape</span>
+          <span class="v">WASM-first hot path, JS host layer for UI, workers, progress, and export.</span>
+        </div>
+        <div class="fact">
+          <span class="k">Focus</span>
+          <span class="v">Image fidelity within real C64 constraints, measured by timing and quality metrics.</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <h2>See More</h2>
+      <div class="links">
+        <a class="link-card" href="/Petsciishop/demo/truski3000-samples/">
+          <strong>Samples Gallery</strong>
+          <span>Side-by-side <code>Original / STD / ECM / MCM</code> outputs with recorded timings and quality metrics.</span>
+        </a>
+        <a class="link-card" href="https://github.com/rcoenen/Petsciishop/blob/master/docs/TRUSKI3000_Engine.md">
+          <strong>Engine Notes</strong>
+          <span>The deeper technical write-up covering the pipeline, mode behavior, metrics, and design decisions.</span>
+        </a>
+        <a class="link-card" href="/Petsciishop/">
+          <strong>Open Petsciishop</strong>
+          <span>Use the full editor in the browser.</span>
+        </a>
+      </div>
+      <p class="footer">
+        TruSkii3000 is part of Petsciishop, not a separate product. This page exists so the engine can have its own home without taking over the main README.
+      </p>
+    </aside>
+  </div>
+</main>
+</body>
+</html>

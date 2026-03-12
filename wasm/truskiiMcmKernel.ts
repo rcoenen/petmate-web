@@ -243,19 +243,17 @@ function computeCsfPenalty(detailScore: f64, glyphSpatialFrequency: f64, csfWeig
   return csfWeight * glyphSpatialFrequency * (detailSlack > 0.0 ? detailSlack : 0.0);
 }
 
-function computeHuePreservationBonus(
-  sourceA: f64,
-  sourceB: f64,
+function computeHuePreservationBonusFromSource(
+  sourceChroma: f64,
+  sourceHue: f64,
   renderedA: f64,
   renderedB: f64,
   weight: f64
 ): f64 {
-  if (weight <= 0.0) return 0.0;
-  const sourceChroma = Math.sqrt(sourceA * sourceA + sourceB * sourceB);
+  if (weight <= 0.0 || sourceChroma < 0.015) return 0.0;
   const renderedChroma = Math.sqrt(renderedA * renderedA + renderedB * renderedB);
-  if (sourceChroma < 0.015 || renderedChroma < 0.015) return 0.0;
+  if (renderedChroma < 0.015) return 0.0;
 
-  const sourceHue = Math.atan2(sourceB, sourceA);
   const renderedHue = Math.atan2(renderedB, renderedA);
   let hueDiff = Math.abs(sourceHue - renderedHue);
   if (hueDiff > Math.PI) hueDiff = 2.0 * Math.PI - hueDiff;
@@ -267,10 +265,18 @@ function computeHuePreservationBonus(
 
 function computeMcmColorDemand(detailScore: f64, avgA: f64, avgB: f64): f64 {
   const chroma = Math.sqrt(avgA * avgA + avgB * avgB);
+  return computeMcmColorDemandFromChroma(detailScore, chroma);
+}
+
+function computeMcmColorDemandFromChroma(detailScore: f64, chroma: f64): f64 {
   if (chroma < 0.015) return 0.0;
   const chromaNeed = chroma < 0.14 ? chroma / 0.14 : 1.0;
   const detailAllowance = 1.0 - (detailScore / 0.8);
   return detailAllowance > 0.0 ? chromaNeed * detailAllowance : 0.0;
+}
+
+function computeMcmHiresColorPenaltyFromDemand(colorDemand: f64, weight: f64): f64 {
+  return weight <= 0.0 ? 0.0 : weight * colorDemand;
 }
 
 function computeMcmHiresColorPenalty(
@@ -279,8 +285,23 @@ function computeMcmHiresColorPenalty(
   avgB: f64,
   weight: f64
 ): f64 {
-  if (weight <= 0.0) return 0.0;
-  return weight * computeMcmColorDemand(detailScore, avgA, avgB);
+  return computeMcmHiresColorPenaltyFromDemand(
+    computeMcmColorDemand(detailScore, avgA, avgB),
+    weight
+  );
+}
+
+function computeMcmMulticolorUsageBonusFromDemand(
+  count1: f64,
+  count2: f64,
+  count3: f64,
+  colorDemand: f64,
+  weight: f64
+): f64 {
+  if (weight <= 0.0 || colorDemand <= 0.0) return 0.0;
+
+  const multicolorCoverage = (count1 + count2 + count3) / <f64>PAIR_COUNT;
+  return weight * colorDemand * multicolorCoverage;
 }
 
 function computeMcmMulticolorUsageBonus(
@@ -292,12 +313,13 @@ function computeMcmMulticolorUsageBonus(
   avgB: f64,
   weight: f64
 ): f64 {
-  if (weight <= 0.0) return 0.0;
-  const colorDemand = computeMcmColorDemand(detailScore, avgA, avgB);
-  if (colorDemand <= 0.0) return 0.0;
-
-  const multicolorCoverage = (count1 + count2 + count3) / <f64>PAIR_COUNT;
-  return weight * colorDemand * multicolorCoverage;
+  return computeMcmMulticolorUsageBonusFromDemand(
+    count1,
+    count2,
+    count3,
+    computeMcmColorDemand(detailScore, avgA, avgB),
+    weight
+  );
 }
 
 function binaryMixIndex(setCount: i32, bg: i32, fg: i32): i32 {
@@ -391,7 +413,9 @@ function computeBestHiresCostByBackgroundForSample(
   const avgB = rankSampleAvgB[sampleIndex];
   const detailScore = rankSampleDetailScores[sampleIndex];
   const totalErrBase = sampleIndex * COLOR_COUNT;
-  const hiresPenalty = computeMcmHiresColorPenalty(detailScore, avgA, avgB, mcmHiresColorPenaltyWeight);
+  const sourceChroma = Math.sqrt(avgA * avgA + avgB * avgB);
+  const colorDemand = computeMcmColorDemandFromChroma(detailScore, sourceChroma);
+  const hiresPenalty = computeMcmHiresColorPenaltyFromDemand(colorDemand, mcmHiresColorPenaltyWeight);
 
   for (let candidateIndex: i32 = 0; candidateIndex < candidateCount; candidateIndex++) {
     const ch = <i32>rankCandidateScreencodes[candidateIndex];
@@ -481,6 +505,9 @@ export function rankModeTriples(
     const detailScore = rankSampleDetailScores[sampleIndex];
     const detailSlack = 1.0 - detailScore;
     const safeDetailSlack = detailSlack > 0.0 ? detailSlack : 0.0;
+    const sourceChroma = Math.sqrt(avgA * avgA + avgB * avgB);
+    const sourceHue = sourceChroma < 0.015 ? 0.0 : Math.atan2(avgB, avgA);
+    const colorDemand = computeMcmColorDemandFromChroma(detailScore, sourceChroma);
     let tripleIndex: i32 = 0;
 
     for (let bg: i32 = 0; bg < COLOR_COUNT; bg++) {
@@ -522,13 +549,11 @@ export function rankModeTriples(
               count0 * rankPaletteB[bg] +
               count1 * rankPaletteB[mc1] +
               count2 * rankPaletteB[mc2];
-            const multicolorUsageBonus = computeMcmMulticolorUsageBonus(
+            const multicolorUsageBonus = computeMcmMulticolorUsageBonusFromDemand(
               count1,
               count2,
               count3f,
-              detailScore,
-              avgA,
-              avgB,
+              colorDemand,
               mcmMulticolorUsageBonusWeight
             );
             const bp3Base = bpBase + 48;
@@ -537,9 +562,9 @@ export function rankModeTriples(
               const lumDiff = avgL - (fixedL / <f64>PAIR_COUNT);
               const renderedA = fixedA / <f64>PAIR_COUNT;
               const renderedB = fixedB / <f64>PAIR_COUNT;
-              const hueBonus = computeHuePreservationBonus(
-                avgA,
-                avgB,
+              const hueBonus = computeHuePreservationBonusFromSource(
+                sourceChroma,
+                sourceHue,
                 renderedA,
                 renderedB,
                 mcmHuePreservationWeight
@@ -560,9 +585,9 @@ export function rankModeTriples(
               const renderedA = (fixedA + count3f * rankPaletteA[fg]) / <f64>PAIR_COUNT;
               const renderedB = (fixedB + count3f * rankPaletteB[fg]) / <f64>PAIR_COUNT;
               const lumDiff = avgL - renderedL;
-              const hueBonus = computeHuePreservationBonus(
-                avgA,
-                avgB,
+              const hueBonus = computeHuePreservationBonusFromSource(
+                sourceChroma,
+                sourceHue,
                 renderedA,
                 renderedB,
                 mcmHuePreservationWeight
@@ -655,7 +680,10 @@ export function computeModeCandidatePool(
 
   const detailSlack = 1.0 - detailScore;
   const safeDetailSlack = detailSlack > 0.0 ? detailSlack : 0.0;
-  const hiresPenalty = computeMcmHiresColorPenalty(detailScore, avgA, avgB, mcmHiresColorPenaltyWeight);
+  const sourceChroma = Math.sqrt(avgA * avgA + avgB * avgB);
+  const sourceHue = sourceChroma < 0.015 ? 0.0 : Math.atan2(avgB, avgA);
+  const colorDemand = computeMcmColorDemandFromChroma(detailScore, sourceChroma);
+  const hiresPenalty = computeMcmHiresColorPenaltyFromDemand(colorDemand, mcmHiresColorPenaltyWeight);
   let selectedCount: i32 = 0;
   resetPoolTopScores(clampedPoolSize);
 
@@ -708,13 +736,11 @@ export function computeModeCandidatePool(
         count0 * rankPaletteB[bg] +
         count1 * rankPaletteB[mc1] +
         count2 * rankPaletteB[mc2];
-      const multicolorUsageBonus = computeMcmMulticolorUsageBonus(
+      const multicolorUsageBonus = computeMcmMulticolorUsageBonusFromDemand(
         count1,
         count2,
         count3f,
-        detailScore,
-        avgA,
-        avgB,
+        colorDemand,
         mcmMulticolorUsageBonusWeight
       );
       if (count3 == 0) {
@@ -722,9 +748,9 @@ export function computeModeCandidatePool(
         const renderedA = fixedA / <f64>PAIR_COUNT;
         const renderedB = fixedB / <f64>PAIR_COUNT;
         const lumDiff = avgL - renderedL;
-        const hueBonus = computeHuePreservationBonus(
-          avgA,
-          avgB,
+        const hueBonus = computeHuePreservationBonusFromSource(
+          sourceChroma,
+          sourceHue,
           renderedA,
           renderedB,
           mcmHuePreservationWeight
@@ -754,9 +780,9 @@ export function computeModeCandidatePool(
         const renderedA = (fixedA + count3f * rankPaletteA[fg]) / <f64>PAIR_COUNT;
         const renderedB = (fixedB + count3f * rankPaletteB[fg]) / <f64>PAIR_COUNT;
         const lumDiff = avgL - renderedL;
-        const hueBonus = computeHuePreservationBonus(
-          avgA,
-          avgB,
+        const hueBonus = computeHuePreservationBonusFromSource(
+          sourceChroma,
+          sourceHue,
           renderedA,
           renderedB,
           mcmHuePreservationWeight

@@ -199,6 +199,12 @@ All constants in `imageConverterStandardCore.ts`:
 - The compact path lowered the isolated preview capture from `31449.7ms` to `24318.4ms` while keeping the current-code output unchanged.
 - Operational rule going forward: if `skeletor` differs from the older `gate-wasm` artifact, attribute that to earlier current-code MCM behavior changes until proven otherwise; do not blame the compact scratch rewrite.
 
+### CODEX: MCM math precompute cleanup (2026-03-11)
+- The next exact-preserving optimization after the compact path was to precompute source chroma/hue/color-demand once per sample/cell in both the MCM WASM kernel and the JS reference path, rather than recomputing `sqrt` / `atan2` / color-demand math inside the inner candidate loops.
+- The pure WASM MCM path also stopped building `foregroundsByBackground` eagerly in `solveMcmForCombo`; that prep now stays behind the JS fallback gates.
+- Targeted validation on `skeletor` under `current-defaults` and `wasm` stayed byte-identical to the pre-change compact path (`previewHash e3d6f78de4e62b4d7b23d0551d820cd65229e9051dd0e21161ad4fac764a71be`, `screencodesHash 3e6523d87875761e6c6c136ce0d9e5e8211655a909a354bdb7bea2e82d3530a4`, `colorsHash 880d4f4b2cb276b3d966caf6b56cdab8485dca1bcc7bcfc6100c5e4dac8907e3`, preview diff `0` pixels).
+- On that same isolated preview capture, `conversionMs` improved from `24318.4ms` to `22180.7ms` (`8.8%` faster).
+
 ### Next: MCM Quality Tuning (port Standard innovations + MCM-specific)
 
 **Shared with ECM** (same changes benefit both — items 1, 3 above apply to MCM's hires-within-MCM candidates too):

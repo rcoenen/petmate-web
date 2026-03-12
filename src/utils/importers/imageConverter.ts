@@ -1748,6 +1748,9 @@ interface McmSampleSummary {
   totalErrByColor: Float32Array;
   detailScore: number;
   saliencyWeight: number;
+  sourceChroma: number;
+  sourceHue: number;
+  colorDemand: number;
 }
 
 interface McmCellScoringState {
@@ -2333,10 +2336,39 @@ function computeMcmColorDemand(
   avgB: number
 ): number {
   const chroma = Math.hypot(avgA, avgB);
+  return computeMcmColorDemandFromChroma(detailScore, chroma);
+}
+
+function computeMcmColorDemandFromChroma(
+  detailScore: number,
+  chroma: number
+): number {
   if (chroma < 0.015) return 0;
   const chromaNeed = Math.min(1, chroma / 0.14);
   const detailAllowance = Math.max(0, 1 - detailScore / 0.8);
   return chromaNeed * detailAllowance;
+}
+
+function computeHuePreservationBonusFromSource(
+  sourceChroma: number,
+  sourceHue: number,
+  renderedA: number,
+  renderedB: number,
+  weight: number
+): number {
+  if (weight <= 0 || sourceChroma < 0.015) return 0;
+  const renderedChroma = Math.hypot(renderedA, renderedB);
+  if (renderedChroma < 0.015) return 0;
+
+  let hueDiff = Math.abs(sourceHue - Math.atan2(renderedB, renderedA));
+  if (hueDiff > Math.PI) hueDiff = 2 * Math.PI - hueDiff;
+
+  const similarity = 1 - (hueDiff / Math.PI);
+  return weight * Math.min(sourceChroma, renderedChroma) * similarity;
+}
+
+function computeMcmHiresColorPenaltyFromDemand(colorDemand: number, weight: number): number {
+  return weight * colorDemand;
 }
 
 function computeMcmHiresColorPenalty(
@@ -2345,7 +2377,19 @@ function computeMcmHiresColorPenalty(
   avgB: number,
   weight: number
 ): number {
-  return weight * computeMcmColorDemand(detailScore, avgA, avgB);
+  return computeMcmHiresColorPenaltyFromDemand(
+    computeMcmColorDemand(detailScore, avgA, avgB),
+    weight
+  );
+}
+
+function computeMcmMulticolorUsageBonusFromDemand(
+  multicolorCoverage: number,
+  colorDemand: number,
+  weight: number
+): number {
+  if (colorDemand <= 0) return 0;
+  return weight * colorDemand * multicolorCoverage;
 }
 
 function computeMcmMulticolorUsageBonus(
@@ -2355,11 +2399,12 @@ function computeMcmMulticolorUsageBonus(
   avgB: number,
   weight: number
 ): number {
-  const colorDemand = computeMcmColorDemand(detailScore, avgA, avgB);
-  if (colorDemand <= 0) return 0;
-
   const multicolorCoverage = (counts[1] + counts[2] + counts[3]) / MCM_PIXELS_PER_CELL;
-  return weight * colorDemand * multicolorCoverage;
+  return computeMcmMulticolorUsageBonusFromDemand(
+    multicolorCoverage,
+    computeMcmColorDemand(detailScore, avgA, avgB),
+    weight
+  );
 }
 
 function buildMcmCellScoringState(
@@ -2539,10 +2584,11 @@ function buildMcmSampleSummary(
   );
   const bestHiresCostByBg = new Float64Array(16);
   bestHiresCostByBg.fill(Infinity);
-  const hiresPenalty = computeMcmHiresColorPenalty(
-    cell.detailScore,
-    cell.avgA,
-    cell.avgB,
+  const sourceChroma = Math.hypot(cell.avgA, cell.avgB);
+  const sourceHue = sourceChroma < 0.015 ? 0 : Math.atan2(cell.avgB, cell.avgA);
+  const colorDemand = computeMcmColorDemandFromChroma(cell.detailScore, sourceChroma);
+  const hiresPenalty = computeMcmHiresColorPenaltyFromDemand(
+    colorDemand,
     settings.mcmHiresColorPenaltyWeight
   );
 
@@ -2582,6 +2628,9 @@ function buildMcmSampleSummary(
     totalErrByColor: cell.totalErrByColor,
     detailScore: cell.detailScore,
     saliencyWeight: cell.saliencyWeight,
+    sourceChroma,
+    sourceHue,
+    colorDemand,
   };
 }
 
@@ -2611,11 +2660,9 @@ function scoreMcmTripleOnSample(
 
     if (2 * fixedErr < best) {
       const counts = context.refMcmBpCount![ch];
-      const multicolorUsageBonus = computeMcmMulticolorUsageBonus(
-        counts,
-        summary.detailScore,
-        summary.avgA,
-        summary.avgB,
+      const multicolorUsageBonus = computeMcmMulticolorUsageBonusFromDemand(
+        (counts[1] + counts[2] + counts[3]) / MCM_PIXELS_PER_CELL,
+        summary.colorDemand,
         settings.mcmMulticolorUsageBonusWeight
       );
       if (counts[3] === 0) {
@@ -2632,9 +2679,9 @@ function scoreMcmTripleOnSample(
            counts[1] * metrics.pB[mc1] +
            counts[2] * metrics.pB[mc2]) / MCM_PIXELS_PER_CELL;
         const lumDiff = summary.avgL - renderedAvgL;
-        const hueBonus = computeHuePreservationBonus(
-          summary.avgA,
-          summary.avgB,
+        const hueBonus = computeHuePreservationBonusFromSource(
+          summary.sourceChroma,
+          summary.sourceHue,
           renderedAvgA,
           renderedAvgB,
           settings.mcmHuePreservationWeight
@@ -2667,9 +2714,9 @@ function scoreMcmTripleOnSample(
            counts[2] * metrics.pB[mc2] +
            counts[3] * metrics.pB[fg]) / MCM_PIXELS_PER_CELL;
         const lumDiff = summary.avgL - renderedAvgL;
-        const hueBonus = computeHuePreservationBonus(
-          summary.avgA,
-          summary.avgB,
+        const hueBonus = computeHuePreservationBonusFromSource(
+          summary.sourceChroma,
+          summary.sourceHue,
           renderedAvgA,
           renderedAvgB,
           settings.mcmHuePreservationWeight
@@ -2749,10 +2796,11 @@ function buildMcmCandidatePool(
   poolSize: number
 ): ScreenCandidate[] {
   const pool: ScreenCandidate[] = [];
-  const hiresPenalty = computeMcmHiresColorPenalty(
-    cell.detailScore,
-    cell.avgA,
-    cell.avgB,
+  const sourceChroma = Math.hypot(cell.avgA, cell.avgB);
+  const sourceHue = sourceChroma < 0.015 ? 0 : Math.atan2(cell.avgB, cell.avgA);
+  const colorDemand = computeMcmColorDemandFromChroma(cell.detailScore, sourceChroma);
+  const hiresPenalty = computeMcmHiresColorPenaltyFromDemand(
+    colorDemand,
     settings.mcmHiresColorPenaltyWeight
   );
 
@@ -2809,11 +2857,9 @@ function buildMcmCandidatePool(
 
     if (pool.length < poolSize || 2 * fixedErr < pool[pool.length - 1].baseError) {
       const counts = context.refMcmBpCount![ch];
-      const multicolorUsageBonus = computeMcmMulticolorUsageBonus(
-        counts,
-        cell.detailScore,
-        cell.avgA,
-        cell.avgB,
+      const multicolorUsageBonus = computeMcmMulticolorUsageBonusFromDemand(
+        (counts[1] + counts[2] + counts[3]) / MCM_PIXELS_PER_CELL,
+        colorDemand,
         settings.mcmMulticolorUsageBonusWeight
       );
       if (counts[3] === 0) {
@@ -2830,9 +2876,9 @@ function buildMcmCandidatePool(
            counts[1] * metrics.pB[mc1] +
            counts[2] * metrics.pB[mc2]) / MCM_PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const hueBonus = computeHuePreservationBonus(
-          cell.avgA,
-          cell.avgB,
+        const hueBonus = computeHuePreservationBonusFromSource(
+          sourceChroma,
+          sourceHue,
           renderedAvgA,
           renderedAvgB,
           settings.mcmHuePreservationWeight
@@ -2884,9 +2930,9 @@ function buildMcmCandidatePool(
            counts[2] * metrics.pB[mc2] +
            counts[3] * metrics.pB[fg]) / MCM_PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const hueBonus = computeHuePreservationBonus(
-          cell.avgA,
-          cell.avgB,
+        const hueBonus = computeHuePreservationBonusFromSource(
+          sourceChroma,
+          sourceHue,
           renderedAvgA,
           renderedAvgB,
           settings.mcmHuePreservationWeight
@@ -4919,7 +4965,7 @@ async function solveMcmForCombo(
   const sampleIndices = getSampleIndices(analysis.rankedIndices, MCM_SAMPLE_COUNT);
   const tGlobals0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const candidateScreencodes = getCandidateScreencodes(256, settings.includeTypographic);
-  const foregroundsByBackground = getForegroundCandidatesByBackground(metrics, 8);
+  let foregroundsByBackground: Uint8Array[] | undefined;
   let rankedTriples: Array<{ triple: [number, number, number]; score: number }>;
   if (scoringKernel?.rankModeTriples) {
     onProgress('MCM globals', 'Coarse WASM triple ranking', 0);
@@ -4943,6 +4989,7 @@ async function solveMcmForCombo(
     onProgress('MCM globals', `Coarse WASM triple ranking (${rankedTriples.length} finalists)`, 100);
     await yieldToUI(shouldCancel);
   } else {
+    foregroundsByBackground = getForegroundCandidatesByBackground(metrics, 8);
     const sampleSummaries = sampleIndices.map(cellIndex =>
       buildMcmSampleSummary(
         analysis.cells[cellIndex],
@@ -4951,7 +4998,7 @@ async function solveMcmForCombo(
         metrics,
         settings,
         candidateScreencodes,
-        foregroundsByBackground,
+        foregroundsByBackground!,
         scoringKernel
       )
     );
@@ -5030,7 +5077,7 @@ async function solveMcmForCombo(
             metrics,
             settings,
             candidateScreencodes,
-            foregroundsByBackground,
+            foregroundsByBackground ?? (foregroundsByBackground = getForegroundCandidatesByBackground(metrics, 8)),
             bg,
             mc1,
             mc2,
@@ -5043,7 +5090,7 @@ async function solveMcmForCombo(
             metrics,
             settings,
             candidateScreencodes,
-            foregroundsByBackground,
+            foregroundsByBackground ?? (foregroundsByBackground = getForegroundCandidatesByBackground(metrics, 8)),
             bg,
             mc1,
             mc2,

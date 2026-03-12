@@ -77,6 +77,11 @@ const poolTopChars = new Uint8Array(MAX_MCM_POOL_SIZE);
 const poolTopColorRams = new Uint8Array(MAX_MCM_POOL_SIZE);
 const poolTopVariants = new Uint8Array(MAX_MCM_POOL_SIZE);
 const poolTopScores = new Float64Array(MAX_MCM_POOL_SIZE);
+const batchPoolCounts = new Uint8Array(MAX_MCM_FINALIST_COUNT);
+const batchPoolTopChars = new Uint8Array(MAX_MCM_FINALIST_COUNT * MAX_MCM_POOL_SIZE);
+const batchPoolTopColorRams = new Uint8Array(MAX_MCM_FINALIST_COUNT * MAX_MCM_POOL_SIZE);
+const batchPoolTopVariants = new Uint8Array(MAX_MCM_FINALIST_COUNT * MAX_MCM_POOL_SIZE);
+const batchPoolTopScores = new Float64Array(MAX_MCM_FINALIST_COUNT * MAX_MCM_POOL_SIZE);
 const rankSampleCellIndices = new Int32Array(MAX_MCM_SAMPLE_COUNT);
 const rankSampleAvgL = new Float64Array(MAX_MCM_SAMPLE_COUNT);
 const rankSampleAvgA = new Float64Array(MAX_MCM_SAMPLE_COUNT);
@@ -130,6 +135,11 @@ export function getPoolTopCharsPtr(): usize { return poolTopChars.dataStart; }
 export function getPoolTopColorRamsPtr(): usize { return poolTopColorRams.dataStart; }
 export function getPoolTopVariantsPtr(): usize { return poolTopVariants.dataStart; }
 export function getPoolTopScoresPtr(): usize { return poolTopScores.dataStart; }
+export function getBatchPoolCountsPtr(): usize { return batchPoolCounts.dataStart; }
+export function getBatchPoolTopCharsPtr(): usize { return batchPoolTopChars.dataStart; }
+export function getBatchPoolTopColorRamsPtr(): usize { return batchPoolTopColorRams.dataStart; }
+export function getBatchPoolTopVariantsPtr(): usize { return batchPoolTopVariants.dataStart; }
+export function getBatchPoolTopScoresPtr(): usize { return batchPoolTopScores.dataStart; }
 export function getRankSampleCellIndicesPtr(): usize { return rankSampleCellIndices.dataStart; }
 export function getRankSampleAvgLPtr(): usize { return rankSampleAvgL.dataStart; }
 export function getRankSampleAvgAPtr(): usize { return rankSampleAvgA.dataStart; }
@@ -651,8 +661,7 @@ export function rankModeTriples(
   return selectedCount;
 }
 
-export function computeModeCandidatePool(
-  cellIndex: i32,
+function scoreModeCandidatePoolWithCurrentMatrices(
   candidateCount: i32,
   poolSize: i32,
   bg: i32,
@@ -668,16 +677,6 @@ export function computeModeCandidatePool(
   mcmHiresColorPenaltyWeight: f64,
   mcmMulticolorUsageBonusWeight: f64
 ): i32 {
-  const clampedCandidateCount = candidateCount > CHAR_COUNT ? CHAR_COUNT : candidateCount;
-  const clampedPoolSize = poolSize > MAX_MCM_POOL_SIZE ? MAX_MCM_POOL_SIZE : poolSize;
-  if (clampedCandidateCount <= 0 || clampedPoolSize <= 0) {
-    return 0;
-  }
-
-  const pixelBasePtr = modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * PIXEL_COUNT * COLOR_COUNT) << 2);
-  const pairBasePtr = modeWeightedPairErrors.dataStart + (<usize>(cellIndex * PAIR_COUNT * COLOR_COUNT) << 2);
-  computeMatricesFromBase(pixelBasePtr, pairBasePtr);
-
   const detailSlack = 1.0 - detailScore;
   const safeDetailSlack = detailSlack > 0.0 ? detailSlack : 0.0;
   const sourceChroma = Math.sqrt(avgA * avgA + avgB * avgB);
@@ -685,9 +684,9 @@ export function computeModeCandidatePool(
   const colorDemand = computeMcmColorDemandFromChroma(detailScore, sourceChroma);
   const hiresPenalty = computeMcmHiresColorPenaltyFromDemand(colorDemand, mcmHiresColorPenaltyWeight);
   let selectedCount: i32 = 0;
-  resetPoolTopScores(clampedPoolSize);
+  resetPoolTopScores(poolSize);
 
-  for (let candidateIndex: i32 = 0; candidateIndex < clampedCandidateCount; candidateIndex++) {
+  for (let candidateIndex: i32 = 0; candidateIndex < candidateCount; candidateIndex++) {
     const ch = <i32>rankCandidateScreencodes[candidateIndex];
     const csfPenalty = csfWeight > 0.0
       ? csfWeight * <f64>rankGlyphSpatialFrequency[ch] * safeDetailSlack
@@ -695,7 +694,7 @@ export function computeModeCandidatePool(
     const hiresBase = ch << 4;
     const bgErr = <f64>poolTotalErrByColor[bg] - <f64>outputSetErrs[hiresBase + bg];
 
-    if (selectedCount < clampedPoolSize || bgErr < poolTopScores[clampedPoolSize - 1]) {
+    if (selectedCount < poolSize || bgErr < poolTopScores[poolSize - 1]) {
       const nSet = rankRefSetCount[ch];
       for (let fg: i32 = 0; fg < 8; fg++) {
         if (!rankHasContrast(fg, bg)) continue;
@@ -707,7 +706,7 @@ export function computeModeCandidatePool(
           csfPenalty +
           lumMatchWeight * lumDiff * lumDiff +
           hiresPenalty;
-        selectedCount = insertPoolCandidate(ch, fg, 0, total, clampedPoolSize, selectedCount);
+        selectedCount = insertPoolCandidate(ch, fg, 0, total, poolSize, selectedCount);
       }
     }
 
@@ -717,7 +716,7 @@ export function computeModeCandidatePool(
       <f64>outputBitPairErrs[bpBase + 16 + mc1] +
       <f64>outputBitPairErrs[bpBase + 32 + mc2];
 
-    if (selectedCount < clampedPoolSize || 2.0 * fixedErr < poolTopScores[clampedPoolSize - 1]) {
+    if (selectedCount < poolSize || 2.0 * fixedErr < poolTopScores[poolSize - 1]) {
       const countsBase = ch * 4;
       const count0 = <f64>rankRefMcmBpCounts[countsBase];
       const count1 = <f64>rankRefMcmBpCounts[countsBase + 1];
@@ -766,7 +765,7 @@ export function computeModeCandidatePool(
           MCM_CANONICAL_UNUSED_COLOR_RAM,
           1,
           total,
-          clampedPoolSize,
+          poolSize,
           selectedCount
         );
         continue;
@@ -793,10 +792,111 @@ export function computeModeCandidatePool(
           csfPenalty -
           hueBonus -
           multicolorUsageBonus;
-        selectedCount = insertPoolCandidate(ch, fg | 8, 1, total, clampedPoolSize, selectedCount);
+        selectedCount = insertPoolCandidate(ch, fg | 8, 1, total, poolSize, selectedCount);
       }
     }
   }
 
   return selectedCount;
+}
+
+export function computeModeCandidatePool(
+  cellIndex: i32,
+  candidateCount: i32,
+  poolSize: i32,
+  bg: i32,
+  mc1: i32,
+  mc2: i32,
+  avgL: f64,
+  avgA: f64,
+  avgB: f64,
+  detailScore: f64,
+  lumMatchWeight: f64,
+  csfWeight: f64,
+  mcmHuePreservationWeight: f64,
+  mcmHiresColorPenaltyWeight: f64,
+  mcmMulticolorUsageBonusWeight: f64
+): i32 {
+  const clampedCandidateCount = candidateCount > CHAR_COUNT ? CHAR_COUNT : candidateCount;
+  const clampedPoolSize = poolSize > MAX_MCM_POOL_SIZE ? MAX_MCM_POOL_SIZE : poolSize;
+  if (clampedCandidateCount <= 0 || clampedPoolSize <= 0) {
+    return 0;
+  }
+
+  const pixelBasePtr = modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * PIXEL_COUNT * COLOR_COUNT) << 2);
+  const pairBasePtr = modeWeightedPairErrors.dataStart + (<usize>(cellIndex * PAIR_COUNT * COLOR_COUNT) << 2);
+  computeMatricesFromBase(pixelBasePtr, pairBasePtr);
+
+  return scoreModeCandidatePoolWithCurrentMatrices(
+    clampedCandidateCount,
+    clampedPoolSize,
+    bg,
+    mc1,
+    mc2,
+    avgL,
+    avgA,
+    avgB,
+    detailScore,
+    lumMatchWeight,
+    csfWeight,
+    mcmHuePreservationWeight,
+    mcmHiresColorPenaltyWeight,
+    mcmMulticolorUsageBonusWeight
+  );
+}
+
+export function computeModeCandidatePoolsBatch(
+  cellIndex: i32,
+  candidateCount: i32,
+  poolSize: i32,
+  finalistCount: i32,
+  avgL: f64,
+  avgA: f64,
+  avgB: f64,
+  detailScore: f64,
+  lumMatchWeight: f64,
+  csfWeight: f64,
+  mcmHuePreservationWeight: f64,
+  mcmHiresColorPenaltyWeight: f64,
+  mcmMulticolorUsageBonusWeight: f64
+): i32 {
+  const clampedCandidateCount = candidateCount > CHAR_COUNT ? CHAR_COUNT : candidateCount;
+  const clampedPoolSize = poolSize > MAX_MCM_POOL_SIZE ? MAX_MCM_POOL_SIZE : poolSize;
+  const clampedFinalistCount = finalistCount > MAX_MCM_FINALIST_COUNT ? MAX_MCM_FINALIST_COUNT : finalistCount;
+  if (clampedCandidateCount <= 0 || clampedPoolSize <= 0 || clampedFinalistCount <= 0) {
+    return 0;
+  }
+
+  const pixelBasePtr = modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * PIXEL_COUNT * COLOR_COUNT) << 2);
+  const pairBasePtr = modeWeightedPairErrors.dataStart + (<usize>(cellIndex * PAIR_COUNT * COLOR_COUNT) << 2);
+  computeMatricesFromBase(pixelBasePtr, pairBasePtr);
+
+  for (let finalistIndex: i32 = 0; finalistIndex < clampedFinalistCount; finalistIndex++) {
+    const selectedCount = scoreModeCandidatePoolWithCurrentMatrices(
+      clampedCandidateCount,
+      clampedPoolSize,
+      <i32>rankTopBgs[finalistIndex],
+      <i32>rankTopMc1s[finalistIndex],
+      <i32>rankTopMc2s[finalistIndex],
+      avgL,
+      avgA,
+      avgB,
+      detailScore,
+      lumMatchWeight,
+      csfWeight,
+      mcmHuePreservationWeight,
+      mcmHiresColorPenaltyWeight,
+      mcmMulticolorUsageBonusWeight
+    );
+    batchPoolCounts[finalistIndex] = <u8>selectedCount;
+    const poolBase = finalistIndex * MAX_MCM_POOL_SIZE;
+    for (let slot: i32 = 0; slot < clampedPoolSize; slot++) {
+      batchPoolTopChars[poolBase + slot] = poolTopChars[slot];
+      batchPoolTopColorRams[poolBase + slot] = poolTopColorRams[slot];
+      batchPoolTopVariants[poolBase + slot] = poolTopVariants[slot];
+      batchPoolTopScores[poolBase + slot] = poolTopScores[slot];
+    }
+  }
+
+  return clampedFinalistCount;
 }

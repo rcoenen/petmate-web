@@ -73,6 +73,20 @@ type BinaryKernelExports = {
   getStandardCellGradientDirectionsPtr(): number;
   getStandardSolveSelectedIndicesPtr(): number;
   getStandardSolveTotalErrorPtr(): number;
+  getStandardBatchSolveCountsPtr(): number;
+  getStandardBatchSolveCharsPtr(): number;
+  getStandardBatchSolveFgsPtr(): number;
+  getStandardBatchSolveVariantsPtr(): number;
+  getStandardBatchSolveBaseErrorsPtr(): number;
+  getStandardBatchSolveBrightnessResidualsPtr(): number;
+  getStandardBatchSolveRepeatHPtr(): number;
+  getStandardBatchSolveRepeatVPtr(): number;
+  getStandardBatchSolveCoherenceColorMasksPtr(): number;
+  getStandardBatchSolveGlyphDirectionsPtr(): number;
+  getStandardBatchSolveEdgeLeftPtr(): number;
+  getStandardBatchSolveEdgeRightPtr(): number;
+  getStandardBatchSolveEdgeTopPtr(): number;
+  getStandardBatchSolveEdgeBottomPtr(): number;
   computeSetErrs(): void;
   computeModeSetErrs(cellIndex: number): void;
   computeHammingDistances(): void;
@@ -134,7 +148,10 @@ type BinaryKernelExports = {
     edgeWeight: number
   ): void;
   computeStandardSolveSelection(passCount: number): void;
+  computeStandardBatchSolveSelection(batchIndex: number, passCount: number): void;
   computeStandardRefineSelection(colorPassCount: number, edgePassCount: number): void;
+  computeStandardBatchRefineSelection(batchIndex: number, colorPassCount: number, edgePassCount: number): void;
+  finalizeStandardBatchSolveSelection(batchIndex: number): void;
   finalizeStandardSolveSelection(): void;
 };
 
@@ -277,6 +294,16 @@ export interface StandardCandidateScoringKernel {
     bgIndices: Uint8Array;
     totalError: number;
   };
+  getResidentSolveViews?(): ResidentSolveViews;
+  getResidentSolveBatchViews?(): ResidentSolveBatchViews;
+  solveResidentBatchSelectionWithNeighborPasses?(batchIndex: number, passCount: number): Uint8Array;
+  refineResidentBatchSelectionWithPostPasses?(batchIndex: number, colorPassCount: number, edgePassCount: number): Uint8Array;
+  finalizeResidentBatchSelection?(batchIndex: number): {
+    screencodes: Uint8Array;
+    colors: Uint8Array;
+    bgIndices: Uint8Array;
+    totalError: number;
+  };
 }
 
 export interface BinaryWasmKernelCreateResult {
@@ -303,6 +330,47 @@ export interface StandardWasmRequestSession {
     width: number;
     height: number;
   };
+}
+
+export interface ResidentSolveViews {
+  counts: Uint8Array;
+  chars: Uint8Array;
+  fgs: Uint8Array;
+  variants: Uint8Array;
+  baseErrors: Float64Array;
+  brightnessResiduals: Float64Array;
+  repeatH: Float64Array;
+  repeatV: Float64Array;
+  coherenceColorMasks: Uint16Array;
+  glyphDirections: Uint8Array;
+  edgeLeft: Uint8Array;
+  edgeRight: Uint8Array;
+  edgeTop: Uint8Array;
+  edgeBottom: Uint8Array;
+  hBoundaryDiffs: Float32Array;
+  vBoundaryDiffs: Float32Array;
+  hBoundaryMeans: Float32Array;
+  vBoundaryMeans: Float32Array;
+  detailScores: Float32Array;
+  gradientDirections: Uint8Array;
+  selectedIndices: Uint8Array;
+}
+
+export interface ResidentSolveBatchViews {
+  counts: Uint8Array;
+  chars: Uint8Array;
+  fgs: Uint8Array;
+  variants: Uint8Array;
+  baseErrors: Float64Array;
+  brightnessResiduals: Float64Array;
+  repeatH: Float64Array;
+  repeatV: Float64Array;
+  coherenceColorMasks: Uint16Array;
+  glyphDirections: Uint8Array;
+  edgeLeft: Uint8Array;
+  edgeRight: Uint8Array;
+  edgeTop: Uint8Array;
+  edgeBottom: Uint8Array;
 }
 
 const STANDARD_WASM_MAX_POOL_SIZE = 16;
@@ -400,6 +468,20 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
   private standardCellGradientDirectionsView: Uint8Array;
   private standardSolveSelectedIndicesView: Uint8Array;
   private standardSolveTotalErrorView: Float64Array;
+  private standardBatchSolveCountsView: Uint8Array;
+  private standardBatchSolveCharsView: Uint8Array;
+  private standardBatchSolveFgsView: Uint8Array;
+  private standardBatchSolveVariantsView: Uint8Array;
+  private standardBatchSolveBaseErrorsView: Float64Array;
+  private standardBatchSolveBrightnessResidualsView: Float64Array;
+  private standardBatchSolveRepeatHView: Float64Array;
+  private standardBatchSolveRepeatVView: Float64Array;
+  private standardBatchSolveCoherenceColorMasksView: Uint16Array;
+  private standardBatchSolveGlyphDirectionsView: Uint8Array;
+  private standardBatchSolveEdgeLeftView: Uint8Array;
+  private standardBatchSolveEdgeRightView: Uint8Array;
+  private standardBatchSolveEdgeTopView: Uint8Array;
+  private standardBatchSolveEdgeBottomView: Uint8Array;
   private readonly standardResidentLayout: StandardWasmResidentLayout;
 
   private constructor(exports: BinaryKernelExports) {
@@ -653,6 +735,79 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.memory.buffer,
       exports.getStandardSolveTotalErrorPtr(),
       1
+    );
+    const residentSolveCandidateCount = 40 * 25 * STANDARD_WASM_MAX_POOL_SIZE;
+    const residentSolveEdgeValueCount = residentSolveCandidateCount * 8;
+    const residentSolveBatchCount = 16;
+    this.standardBatchSolveCountsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveCountsPtr(),
+      residentSolveBatchCount * 40 * 25
+    );
+    this.standardBatchSolveCharsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveCharsPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveFgsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveFgsPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveVariantsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveVariantsPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveBaseErrorsView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveBaseErrorsPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveBrightnessResidualsView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveBrightnessResidualsPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveRepeatHView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveRepeatHPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveRepeatVView = new Float64Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveRepeatVPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveCoherenceColorMasksView = new Uint16Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveCoherenceColorMasksPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveGlyphDirectionsView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveGlyphDirectionsPtr(),
+      residentSolveBatchCount * residentSolveCandidateCount
+    );
+    this.standardBatchSolveEdgeLeftView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveEdgeLeftPtr(),
+      residentSolveBatchCount * residentSolveEdgeValueCount
+    );
+    this.standardBatchSolveEdgeRightView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveEdgeRightPtr(),
+      residentSolveBatchCount * residentSolveEdgeValueCount
+    );
+    this.standardBatchSolveEdgeTopView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveEdgeTopPtr(),
+      residentSolveBatchCount * residentSolveEdgeValueCount
+    );
+    this.standardBatchSolveEdgeBottomView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getStandardBatchSolveEdgeBottomPtr(),
+      residentSolveBatchCount * residentSolveEdgeValueCount
     );
     this.standardResidentLayout = {
       srcL: { ptr: exports.getStandardSrcLPtr(), length: this.standardSrcLView.length },
@@ -955,6 +1110,83 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
   finalizeSelection(selectedIndices: Uint8Array) {
     this.standardSolveSelectedIndicesView.set(selectedIndices);
     this.exports.finalizeStandardSolveSelection();
+    return {
+      screencodes: new Uint8Array(
+        this.exports.memory.buffer,
+        this.standardResidentLayout.screenCodes.ptr,
+        this.standardResidentLayout.screenCodes.length
+      ),
+      colors: new Uint8Array(
+        this.exports.memory.buffer,
+        this.standardResidentLayout.colors.ptr,
+        this.standardResidentLayout.colors.length
+      ),
+      bgIndices: new Uint8Array(
+        this.exports.memory.buffer,
+        this.standardResidentLayout.bgIndices.ptr,
+        this.standardResidentLayout.bgIndices.length
+      ),
+      totalError: this.standardSolveTotalErrorView[0],
+    };
+  }
+
+  getResidentSolveViews(): ResidentSolveViews {
+    return {
+      counts: this.standardSolveCountsView,
+      chars: this.standardSolveCharsView,
+      fgs: this.standardSolveFgsView,
+      variants: this.standardSolveVariantsView,
+      baseErrors: this.standardSolveBaseErrorsView,
+      brightnessResiduals: this.standardSolveBrightnessResidualsView,
+      repeatH: this.standardSolveRepeatHView,
+      repeatV: this.standardSolveRepeatVView,
+      coherenceColorMasks: this.standardSolveCoherenceColorMasksView,
+      glyphDirections: this.standardSolveGlyphDirectionsView,
+      edgeLeft: this.standardSolveEdgeLeftView,
+      edgeRight: this.standardSolveEdgeRightView,
+      edgeTop: this.standardSolveEdgeTopView,
+      edgeBottom: this.standardSolveEdgeBottomView,
+      hBoundaryDiffs: this.standardSolveHBoundaryDiffsView,
+      vBoundaryDiffs: this.standardSolveVBoundaryDiffsView,
+      hBoundaryMeans: this.standardSolveHBoundaryMeansView,
+      vBoundaryMeans: this.standardSolveVBoundaryMeansView,
+      detailScores: this.standardCellDetailScoresView,
+      gradientDirections: this.standardCellGradientDirectionsView,
+      selectedIndices: this.standardSolveSelectedIndicesView,
+    };
+  }
+
+  getResidentSolveBatchViews(): ResidentSolveBatchViews {
+    return {
+      counts: this.standardBatchSolveCountsView,
+      chars: this.standardBatchSolveCharsView,
+      fgs: this.standardBatchSolveFgsView,
+      variants: this.standardBatchSolveVariantsView,
+      baseErrors: this.standardBatchSolveBaseErrorsView,
+      brightnessResiduals: this.standardBatchSolveBrightnessResidualsView,
+      repeatH: this.standardBatchSolveRepeatHView,
+      repeatV: this.standardBatchSolveRepeatVView,
+      coherenceColorMasks: this.standardBatchSolveCoherenceColorMasksView,
+      glyphDirections: this.standardBatchSolveGlyphDirectionsView,
+      edgeLeft: this.standardBatchSolveEdgeLeftView,
+      edgeRight: this.standardBatchSolveEdgeRightView,
+      edgeTop: this.standardBatchSolveEdgeTopView,
+      edgeBottom: this.standardBatchSolveEdgeBottomView,
+    };
+  }
+
+  solveResidentBatchSelectionWithNeighborPasses(batchIndex: number, passCount: number): Uint8Array {
+    this.exports.computeStandardBatchSolveSelection(batchIndex, passCount);
+    return this.standardSolveSelectedIndicesView;
+  }
+
+  refineResidentBatchSelectionWithPostPasses(batchIndex: number, colorPassCount: number, edgePassCount: number): Uint8Array {
+    this.exports.computeStandardBatchRefineSelection(batchIndex, colorPassCount, edgePassCount);
+    return this.standardSolveSelectedIndicesView;
+  }
+
+  finalizeResidentBatchSelection(batchIndex: number) {
+    this.exports.finalizeStandardBatchSolveSelection(batchIndex);
     return {
       screencodes: new Uint8Array(
         this.exports.memory.buffer,

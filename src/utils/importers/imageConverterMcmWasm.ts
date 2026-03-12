@@ -48,6 +48,11 @@ type McmKernelExports = {
   getPoolTopColorRamsPtr(): number;
   getPoolTopVariantsPtr(): number;
   getPoolTopScoresPtr(): number;
+  getBatchPoolCountsPtr(): number;
+  getBatchPoolTopCharsPtr(): number;
+  getBatchPoolTopColorRamsPtr(): number;
+  getBatchPoolTopVariantsPtr(): number;
+  getBatchPoolTopScoresPtr(): number;
   getRankSampleCellIndicesPtr(): number;
   getRankSampleAvgLPtr(): number;
   getRankSampleAvgAPtr(): number;
@@ -101,6 +106,21 @@ type McmKernelExports = {
     mcmHiresColorPenaltyWeight: number,
     mcmMulticolorUsageBonusWeight: number
   ): number;
+  computeModeCandidatePoolsBatch(
+    cellIndex: number,
+    candidateCount: number,
+    poolSize: number,
+    finalistCount: number,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    lumMatchWeight: number,
+    csfWeight: number,
+    mcmHuePreservationWeight: number,
+    mcmHiresColorPenaltyWeight: number,
+    mcmMulticolorUsageBonusWeight: number
+  ): number;
 };
 
 type McmKernelImports = WebAssembly.Imports & {
@@ -118,6 +138,14 @@ export interface McmWasmKernelCreateResult {
   kernel: McmWasmKernel | null;
   error?: string;
 };
+
+export interface McmBatchCandidatePools {
+  counts: Uint8Array;
+  chars: Uint8Array;
+  colorRams: Uint8Array;
+  variants: Uint8Array;
+  scores: Float64Array;
+}
 
 let wasmModulePromise: Promise<WebAssembly.Module> | null = null;
 
@@ -170,6 +198,11 @@ export class McmWasmKernel {
   private poolTopColorRamsView: Uint8Array;
   private poolTopVariantsView: Uint8Array;
   private poolTopScoresView: Float64Array;
+  private batchPoolCountsView: Uint8Array;
+  private batchPoolTopCharsView: Uint8Array;
+  private batchPoolTopColorRamsView: Uint8Array;
+  private batchPoolTopVariantsView: Uint8Array;
+  private batchPoolTopScoresView: Float64Array;
   private rankSampleCellIndicesView: Int32Array;
   private rankSampleAvgLView: Float64Array;
   private rankSampleAvgAView: Float64Array;
@@ -224,6 +257,11 @@ export class McmWasmKernel {
     this.poolTopColorRamsView = new Uint8Array(exports.memory.buffer, exports.getPoolTopColorRamsPtr(), 16);
     this.poolTopVariantsView = new Uint8Array(exports.memory.buffer, exports.getPoolTopVariantsPtr(), 16);
     this.poolTopScoresView = new Float64Array(exports.memory.buffer, exports.getPoolTopScoresPtr(), 16);
+    this.batchPoolCountsView = new Uint8Array(exports.memory.buffer, exports.getBatchPoolCountsPtr(), 16);
+    this.batchPoolTopCharsView = new Uint8Array(exports.memory.buffer, exports.getBatchPoolTopCharsPtr(), 16 * 16);
+    this.batchPoolTopColorRamsView = new Uint8Array(exports.memory.buffer, exports.getBatchPoolTopColorRamsPtr(), 16 * 16);
+    this.batchPoolTopVariantsView = new Uint8Array(exports.memory.buffer, exports.getBatchPoolTopVariantsPtr(), 16 * 16);
+    this.batchPoolTopScoresView = new Float64Array(exports.memory.buffer, exports.getBatchPoolTopScoresPtr(), 16 * 16);
     this.rankSampleCellIndicesView = new Int32Array(exports.memory.buffer, exports.getRankSampleCellIndicesPtr(), 64);
     this.rankSampleAvgLView = new Float64Array(exports.memory.buffer, exports.getRankSampleAvgLPtr(), 64);
     this.rankSampleAvgAView = new Float64Array(exports.memory.buffer, exports.getRankSampleAvgAPtr(), 64);
@@ -401,6 +439,69 @@ export class McmWasmKernel {
       colorRams: this.poolTopColorRamsView.subarray(0, count),
       variants: this.poolTopVariantsView.subarray(0, count),
       scores: this.poolTopScoresView.subarray(0, count),
+    };
+  }
+
+  computeModeCandidatePoolsBatch(
+    cellIndex: number,
+    cell: {
+      totalErrByColor: Float32Array;
+      avgL: number;
+      avgA: number;
+      avgB: number;
+      detailScore: number;
+    },
+    candidateScreencodes: Uint16Array,
+    finalistCount: number,
+    metrics: {
+      pairDiff: Float64Array;
+      binaryMixL: Float64Array;
+      binaryMixA: Float64Array;
+      binaryMixB: Float64Array;
+      pL: Float64Array;
+      pA: Float64Array;
+      pB: Float64Array;
+      maxPairDiff: number;
+    },
+    context: McmKernelContext,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+      mcmHuePreservationWeight: number;
+      mcmHiresColorPenaltyWeight: number;
+      mcmMulticolorUsageBonusWeight: number;
+    },
+    poolSize: number
+  ): McmBatchCandidatePools {
+    this.ensureContext(context);
+    this.ensurePairDiff(metrics.pairDiff);
+    this.ensureRankingMetrics(metrics);
+    this.rankCandidateScreencodesView.set(candidateScreencodes);
+    this.poolTotalErrByColorView.set(cell.totalErrByColor);
+
+    const rankedCount = this.exports.computeModeCandidatePoolsBatch(
+      cellIndex,
+      candidateScreencodes.length,
+      Math.min(poolSize, 16),
+      Math.min(finalistCount, 16),
+      cell.avgL,
+      cell.avgA,
+      cell.avgB,
+      cell.detailScore,
+      settings.lumMatchWeight,
+      settings.csfWeight,
+      settings.mcmHuePreservationWeight,
+      settings.mcmHiresColorPenaltyWeight,
+      settings.mcmMulticolorUsageBonusWeight
+    );
+
+    const slotStride = 16;
+    return {
+      counts: this.batchPoolCountsView.subarray(0, rankedCount),
+      chars: this.batchPoolTopCharsView.subarray(0, rankedCount * slotStride),
+      colorRams: this.batchPoolTopColorRamsView.subarray(0, rankedCount * slotStride),
+      variants: this.batchPoolTopVariantsView.subarray(0, rankedCount * slotStride),
+      scores: this.batchPoolTopScoresView.subarray(0, rankedCount * slotStride),
     };
   }
 

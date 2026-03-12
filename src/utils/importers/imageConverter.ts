@@ -9,7 +9,11 @@ import {
   solveStandardOffset,
 } from './imageConverterStandardCore';
 import type { StandardSolvedModeCandidate } from './imageConverterStandardCore';
-import type { StandardCandidateScoringKernel } from './imageConverterBinaryWasm';
+import type {
+  ResidentSolveBatchViews,
+  ResidentSolveViews,
+  StandardCandidateScoringKernel,
+} from './imageConverterBinaryWasm';
 import {
   disposeStandardConverterWorkers,
   runStandardConversionInWorkers,
@@ -102,6 +106,24 @@ const _ecmSolveEdgeRight = new Uint8Array(CELL_COUNT * 16 * 8);
 const _ecmSolveEdgeTop = new Uint8Array(CELL_COUNT * 16 * 8);
 const _ecmSolveEdgeBottom = new Uint8Array(CELL_COUNT * 16 * 8);
 const _ecmSelectedIndicesU8 = new Uint8Array(CELL_COUNT);
+
+type SolveScratchWriteTarget = Pick<
+  ResidentSolveViews | ResidentSolveBatchViews,
+  | 'counts'
+  | 'chars'
+  | 'fgs'
+  | 'variants'
+  | 'baseErrors'
+  | 'brightnessResiduals'
+  | 'repeatH'
+  | 'repeatV'
+  | 'coherenceColorMasks'
+  | 'glyphDirections'
+  | 'edgeLeft'
+  | 'edgeRight'
+  | 'edgeTop'
+  | 'edgeBottom'
+>;
 
 // --- Color Science ---
 
@@ -1388,6 +1410,47 @@ function writeBinaryCandidateToSolveScratch(
   );
 }
 
+function writeBinaryCandidateToSolveTarget(
+  target: SolveScratchWriteTarget,
+  flatIndex: number,
+  mask: Uint8Array,
+  char: number,
+  bg: number,
+  fg: number,
+  glyphDirection: CellGradientDirection,
+  baseError: number,
+  brightnessResidual: number,
+  pairDiff: Float64Array,
+  maxPairDiff: number
+) {
+  target.chars[flatIndex] = char;
+  target.fgs[flatIndex] = fg;
+  target.variants[flatIndex] = 0;
+  target.baseErrors[flatIndex] = baseError;
+  target.brightnessResiduals[flatIndex] = brightnessResidual;
+  target.coherenceColorMasks[flatIndex] = buildBinaryCoherenceColorMask(mask, bg, fg);
+  target.glyphDirections[flatIndex] = glyphDirection;
+
+  const edgeBase = flatIndex * 8;
+  writeBinaryEdges(mask, bg, fg, target.edgeLeft, target.edgeRight, target.edgeTop, target.edgeBottom, edgeBase);
+  target.repeatH[flatIndex] = computeSelfTileScaleAt(
+    target.edgeRight,
+    edgeBase,
+    target.edgeLeft,
+    edgeBase,
+    pairDiff,
+    maxPairDiff
+  );
+  target.repeatV[flatIndex] = computeSelfTileScaleAt(
+    target.edgeBottom,
+    edgeBase,
+    target.edgeTop,
+    edgeBase,
+    pairDiff,
+    maxPairDiff
+  );
+}
+
 function makeMcmCandidate(
   bits: Uint8Array,
   char: number,
@@ -1457,6 +1520,50 @@ function writeMcmCandidateToSolveScratch(
     _ecmSolveEdgeBottom,
     edgeBase,
     _ecmSolveEdgeTop,
+    edgeBase,
+    pairDiff,
+    maxPairDiff
+  );
+}
+
+function writeMcmCandidateToSolveTarget(
+  target: SolveScratchWriteTarget,
+  flatIndex: number,
+  bits: Uint8Array,
+  char: number,
+  colorRam: number,
+  bg: number,
+  mc1: number,
+  mc2: number,
+  glyphDirection: CellGradientDirection,
+  baseError: number,
+  brightnessResidual: number,
+  pairDiff: Float64Array,
+  maxPairDiff: number
+) {
+  const fg = mcmForegroundColor(colorRam);
+  target.chars[flatIndex] = char;
+  target.fgs[flatIndex] = colorRam;
+  target.variants[flatIndex] = 1;
+  target.baseErrors[flatIndex] = baseError;
+  target.brightnessResiduals[flatIndex] = brightnessResidual;
+  target.coherenceColorMasks[flatIndex] = buildMcmCoherenceColorMask(bits, bg, fg);
+  target.glyphDirections[flatIndex] = glyphDirection;
+
+  const edgeBase = flatIndex * 8;
+  writeMcmEdges(bits, bg, mc1, mc2, fg, target.edgeLeft, target.edgeRight, target.edgeTop, target.edgeBottom, edgeBase);
+  target.repeatH[flatIndex] = computeSelfTileScaleAt(
+    target.edgeRight,
+    edgeBase,
+    target.edgeLeft,
+    edgeBase,
+    pairDiff,
+    maxPairDiff
+  );
+  target.repeatV[flatIndex] = computeSelfTileScaleAt(
+    target.edgeBottom,
+    edgeBase,
+    target.edgeTop,
     edgeBase,
     pairDiff,
     maxPairDiff
@@ -1871,6 +1978,28 @@ export interface McmCandidateScoringKernel {
     }
   ): {
     count: number;
+    chars: Uint8Array;
+    colorRams: Uint8Array;
+    variants: Uint8Array;
+    scores: Float64Array;
+  };
+  computeModeCandidatePoolsBatch?(
+    cellIndex: number,
+    cell: Pick<SourceCellData, 'totalErrByColor' | 'avgL' | 'avgA' | 'avgB' | 'detailScore'>,
+    candidateScreencodes: Uint16Array,
+    finalistCount: number,
+    metrics: Pick<PaletteMetricData, 'pairDiff' | 'binaryMixL' | 'binaryMixA' | 'binaryMixB' | 'pL' | 'pA' | 'pB' | 'maxPairDiff'>,
+    context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets' | 'flatMcmPositions' | 'mcmPositionOffsets' | 'refSetCount' | 'refMcmBpCount' | 'glyphAtlas'>,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+      mcmHuePreservationWeight: number;
+      mcmHiresColorPenaltyWeight: number;
+      mcmMulticolorUsageBonusWeight: number;
+    },
+    poolSize: number
+  ): {
+    counts: Uint8Array;
     chars: Uint8Array;
     colorRams: Uint8Array;
     variants: Uint8Array;
@@ -4488,6 +4617,33 @@ function canUseCompactMcmWasmPath(
   );
 }
 
+function canUseResidentBatchMcmWasmPath(
+  scoringKernel: McmCandidateScoringKernel | undefined,
+  wasmKernel: StandardCandidateScoringKernel | undefined
+): wasmKernel is StandardCandidateScoringKernel {
+  return Boolean(
+    !ENABLE_WASM_DIAGNOSTICS &&
+    scoringKernel?.computeModeCandidatePoolsBatch &&
+    wasmKernel?.getResidentSolveViews &&
+    wasmKernel?.getResidentSolveBatchViews &&
+    wasmKernel?.solveResidentBatchSelectionWithNeighborPasses &&
+    wasmKernel?.refineResidentBatchSelectionWithPostPasses &&
+    wasmKernel?.finalizeResidentBatchSelection
+  );
+}
+
+function primeResidentSolveViews(
+  views: ResidentSolveViews,
+  analysis: SourceAnalysis
+) {
+  views.hBoundaryDiffs.set(analysis.hBoundaryDiffs);
+  views.vBoundaryDiffs.set(analysis.vBoundaryDiffs);
+  views.hBoundaryMeans.set(analysis.hBoundaryMeans);
+  views.vBoundaryMeans.set(analysis.vBoundaryMeans);
+  views.detailScores.set(analysis.detailScores);
+  views.gradientDirections.set(analysis.gradientDirections);
+}
+
 async function solveCompactBinaryScreenWithKernel(
   candidatePoolsByBackground: CompactBinaryCandidatePoolsByBackground,
   backgrounds: number[],
@@ -4637,6 +4793,140 @@ async function buildMcmSolveScratchWithKernel(
            counts[2] * metrics.pL[mc2] +
            counts[3] * metrics.pL[mcmForegroundColor(colorRam)]) / MCM_PIXELS_PER_CELL;
         writeMcmCandidateToSolveScratch(
+          flatIndex,
+          context.refMcm[ch],
+          ch,
+          colorRam,
+          bg,
+          mc1,
+          mc2,
+          context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+          baseError,
+          cell.avgL - renderedAvgL,
+          metrics.pairDiff,
+          metrics.maxPairDiff
+        );
+      }
+    }
+
+    if ((cellIndex & 127) === 0) {
+      await yieldToUI(shouldCancel);
+    }
+  }
+}
+
+async function buildMcmResidentSolveBatchesWithKernel(
+  cells: SourceCellData[],
+  analysis: SourceAnalysis,
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  settings: ConverterSettings,
+  candidateScreencodes: Uint16Array,
+  rankedTriples: Array<{ triple: [number, number, number]; score: number }>,
+  scoringKernel: McmCandidateScoringKernel,
+  wasmKernel: StandardCandidateScoringKernel,
+  shouldCancel?: () => boolean
+) {
+  if (
+    !scoringKernel.computeModeCandidatePoolsBatch ||
+    !wasmKernel.getResidentSolveViews ||
+    !wasmKernel.getResidentSolveBatchViews ||
+    !context.refMcm ||
+    !context.refMcmBpCount
+  ) {
+    throw new Error('Missing resident MCM WASM batch support.');
+  }
+
+  const activeViews = wasmKernel.getResidentSolveViews();
+  const batchViews = wasmKernel.getResidentSolveBatchViews();
+  primeResidentSolveViews(activeViews, analysis);
+
+  const finalistCount = rankedTriples.length;
+  const batchCellStride = CELL_COUNT;
+  const batchCandidateStride = CELL_COUNT * 16;
+  const batchPoolStride = 16;
+  const fallbackChar = 32;
+  const fallbackDirection = context.glyphAtlas.dominantDirection[fallbackChar] as CellGradientDirection;
+
+  for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+    const cell = cells[cellIndex];
+    const pooled = scoringKernel.computeModeCandidatePoolsBatch(
+      cellIndex,
+      cell,
+      candidateScreencodes,
+      finalistCount,
+      metrics,
+      context,
+      {
+        lumMatchWeight: settings.lumMatchWeight,
+        csfWeight: settings.csfWeight,
+        mcmHuePreservationWeight: settings.mcmHuePreservationWeight,
+        mcmHiresColorPenaltyWeight: settings.mcmHiresColorPenaltyWeight,
+        mcmMulticolorUsageBonusWeight: settings.mcmMulticolorUsageBonusWeight,
+      },
+      MCM_POOL_SIZE
+    );
+
+    for (let finalistIndex = 0; finalistIndex < finalistCount; finalistIndex++) {
+      const [bg, mc1, mc2] = rankedTriples[finalistIndex].triple;
+      const count = Math.min(MCM_POOL_SIZE, Math.min(16, pooled.counts[finalistIndex] ?? 0));
+      const countOffset = finalistIndex * batchCellStride + cellIndex;
+      const solveBase = finalistIndex * batchCandidateStride + cellIndex * 16;
+
+      if (count <= 0) {
+        batchViews.counts[countOffset] = 1;
+        writeBinaryCandidateToSolveTarget(
+          batchViews,
+          solveBase,
+          context.ref[fallbackChar],
+          fallbackChar,
+          bg,
+          bg === 0 ? 1 : 0,
+          fallbackDirection,
+          Infinity,
+          0,
+          metrics.pairDiff,
+          metrics.maxPairDiff
+        );
+        continue;
+      }
+
+      batchViews.counts[countOffset] = count;
+      const poolBase = finalistIndex * batchPoolStride;
+      for (let slot = 0; slot < count; slot++) {
+        const flatIndex = solveBase + slot;
+        const poolIndex = poolBase + slot;
+        const ch = pooled.chars[poolIndex] ?? 0;
+        const colorRam = pooled.colorRams[poolIndex] ?? 0;
+        const baseError = pooled.scores[poolIndex] ?? Infinity;
+
+        if ((pooled.variants[poolIndex] ?? 0) === 0) {
+          const fg = colorRam;
+          const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
+          writeBinaryCandidateToSolveTarget(
+            batchViews,
+            flatIndex,
+            context.ref[ch],
+            ch,
+            bg,
+            fg,
+            context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+            baseError,
+            cell.avgL - metrics.binaryMixL[mixIndex],
+            metrics.pairDiff,
+            metrics.maxPairDiff
+          );
+          continue;
+        }
+
+        const counts = context.refMcmBpCount[ch];
+        const renderedAvgL =
+          (counts[0] * metrics.pL[bg] +
+           counts[1] * metrics.pL[mc1] +
+           counts[2] * metrics.pL[mc2] +
+           counts[3] * metrics.pL[mcmForegroundColor(colorRam)]) / MCM_PIXELS_PER_CELL;
+        writeMcmCandidateToSolveTarget(
+          batchViews,
           flatIndex,
           context.refMcm[ch],
           ch,
@@ -5015,6 +5305,7 @@ async function solveMcmForCombo(
   }
   const tGlobals1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const useWasmMcmCandidatePools = Boolean(scoringKernel?.computeModeCandidatePool);
+  const useResidentBatchMcmWasmPath = canUseResidentBatchMcmWasmPath(scoringKernel, mcmWasmSolveKernel);
   const useCompactMcmWasmPath = canUseCompactMcmWasmPath(scoringKernel, mcmWasmSolveKernel);
   const cellStates = !useWasmMcmCandidatePools && ENABLE_MCM_CELL_STATE_REUSE
     ? await buildMcmCellScoringStates(
@@ -5029,6 +5320,80 @@ async function solveMcmForCombo(
   let best: SolvedModeCandidate | undefined;
   let poolTime = 0;
   let solveTime = 0;
+  if (useResidentBatchMcmWasmPath) {
+    const tPool0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    await buildMcmResidentSolveBatchesWithKernel(
+      analysis.cells,
+      analysis,
+      context,
+      metrics,
+      settings,
+      candidateScreencodes,
+      rankedTriples,
+      scoringKernel!,
+      mcmWasmSolveKernel!,
+      shouldCancel
+    );
+    poolTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tPool0;
+
+    for (let finalistIndex = 0; finalistIndex < rankedTriples.length; finalistIndex++) {
+      const [bg, mc1, mc2] = rankedTriples[finalistIndex].triple;
+      onProgress(
+        'Converting',
+        `MCM bg=${bg}, mc1=${mc1}, mc2=${mc2} (${finalistIndex + 1}/${rankedTriples.length})`,
+        Math.round((finalistIndex / Math.max(1, rankedTriples.length)) * 100)
+      );
+      await yieldToUI(shouldCancel);
+
+      const tSolve0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      mcmWasmSolveKernel!.solveResidentBatchSelectionWithNeighborPasses!(finalistIndex, SCREEN_SOLVE_PASSES);
+      mcmWasmSolveKernel!.refineResidentBatchSelectionWithPostPasses!(
+        finalistIndex,
+        COLOR_COHERENCE_PASSES,
+        EDGE_CONTINUITY_PASSES
+      );
+      const finalized = mcmWasmSolveKernel!.finalizeResidentBatchSelection!(finalistIndex);
+      solveTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tSolve0;
+
+      const solved: PetsciiResult = {
+        screencodes: Uint8Array.from(finalized.screencodes),
+        colors: Uint8Array.from(finalized.colors),
+        bgIndices: Uint8Array.from(finalized.bgIndices),
+        totalError: finalized.totalError,
+      };
+      const conversion: ConversionResult = {
+        screencodes: solved.screencodes,
+        colors: solved.colors,
+        backgroundColor: bg,
+        ecmBgColors: [],
+        bgIndices: [],
+        mcmSharedColors: [mc1, mc2],
+        charset: 'upper',
+        mode: 'mcm',
+      };
+      best = pickBetterModeCandidate(best, {
+        result: solved,
+        conversion,
+        preview: palette
+          ? renderMcmPreview(solved, palette, context.ref, context.refMcm!, bg, mc1, mc2)
+          : undefined,
+        error: solved.totalError,
+      });
+    }
+
+    const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    console.info('[TruSkii3000] MCM stages', {
+      backend: scoringKernel ? 'wasm' : 'js',
+      globalsMs: Number((tGlobals1 - tGlobals0).toFixed(1)),
+      poolsMs: Number(poolTime.toFixed(1)),
+      solveMs: Number(solveTime.toFixed(1)),
+      totalMs: Number((t1 - t0).toFixed(1)),
+      finalists: rankedTriples.length,
+    });
+
+    return best!;
+  }
+
   for (let finalistIndex = 0; finalistIndex < rankedTriples.length; finalistIndex++) {
     const [bg, mc1, mc2] = rankedTriples[finalistIndex].triple;
     onProgress(

@@ -35,6 +35,7 @@ const OUTPUT_COUNT: i32 = CHAR_COUNT * COLOR_COUNT;
 const PAIR_DIFF_COUNT: i32 = COLOR_COUNT * COLOR_COUNT;
 const BINARY_MIX_COUNT: i32 = (PIXEL_COUNT + 1) * COLOR_COUNT * COLOR_COUNT;
 const MAX_STANDARD_POOL_SIZE: i32 = 16;
+const STANDARD_SOLVE_BATCH_COUNT: i32 = 16;
 const STANDARD_SOLVE_CANDIDATE_COUNT: i32 = CELL_COUNT * MAX_STANDARD_POOL_SIZE;
 const STANDARD_SOLVE_EDGE_VALUE_COUNT: i32 = STANDARD_SOLVE_CANDIDATE_COUNT * 8;
 const H_BOUNDARY_DIFF_COUNT: i32 = GRID_HEIGHT * (GRID_WIDTH - 1) * 8;
@@ -132,6 +133,20 @@ const standardCellDetailScores = new Float32Array(CELL_COUNT);
 const standardCellGradientDirections = new Uint8Array(CELL_COUNT);
 const standardSolveSelectedIndices = new Uint8Array(CELL_COUNT);
 const standardSolveTotalError = new Float64Array(1);
+const standardBatchSolveCounts = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * CELL_COUNT);
+const standardBatchSolveChars = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveFgs = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveVariants = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveBaseErrors = new Float64Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveBrightnessResiduals = new Float64Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveRepeatH = new Float64Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveRepeatV = new Float64Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveCoherenceColorMasks = new Uint16Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveGlyphDirections = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_CANDIDATE_COUNT);
+const standardBatchSolveEdgeLeft = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_EDGE_VALUE_COUNT);
+const standardBatchSolveEdgeRight = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_EDGE_VALUE_COUNT);
+const standardBatchSolveEdgeTop = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_EDGE_VALUE_COUNT);
+const standardBatchSolveEdgeBottom = new Uint8Array(STANDARD_SOLVE_BATCH_COUNT * STANDARD_SOLVE_EDGE_VALUE_COUNT);
 
 export function getWeightedPixelErrorsPtr(): usize {
   return weightedPixelErrors.dataStart;
@@ -351,6 +366,62 @@ export function getStandardSolveSelectedIndicesPtr(): usize {
 
 export function getStandardSolveTotalErrorPtr(): usize {
   return standardSolveTotalError.dataStart;
+}
+
+export function getStandardBatchSolveCountsPtr(): usize {
+  return standardBatchSolveCounts.dataStart;
+}
+
+export function getStandardBatchSolveCharsPtr(): usize {
+  return standardBatchSolveChars.dataStart;
+}
+
+export function getStandardBatchSolveFgsPtr(): usize {
+  return standardBatchSolveFgs.dataStart;
+}
+
+export function getStandardBatchSolveVariantsPtr(): usize {
+  return standardBatchSolveVariants.dataStart;
+}
+
+export function getStandardBatchSolveBaseErrorsPtr(): usize {
+  return standardBatchSolveBaseErrors.dataStart;
+}
+
+export function getStandardBatchSolveBrightnessResidualsPtr(): usize {
+  return standardBatchSolveBrightnessResiduals.dataStart;
+}
+
+export function getStandardBatchSolveRepeatHPtr(): usize {
+  return standardBatchSolveRepeatH.dataStart;
+}
+
+export function getStandardBatchSolveRepeatVPtr(): usize {
+  return standardBatchSolveRepeatV.dataStart;
+}
+
+export function getStandardBatchSolveCoherenceColorMasksPtr(): usize {
+  return standardBatchSolveCoherenceColorMasks.dataStart;
+}
+
+export function getStandardBatchSolveGlyphDirectionsPtr(): usize {
+  return standardBatchSolveGlyphDirections.dataStart;
+}
+
+export function getStandardBatchSolveEdgeLeftPtr(): usize {
+  return standardBatchSolveEdgeLeft.dataStart;
+}
+
+export function getStandardBatchSolveEdgeRightPtr(): usize {
+  return standardBatchSolveEdgeRight.dataStart;
+}
+
+export function getStandardBatchSolveEdgeTopPtr(): usize {
+  return standardBatchSolveEdgeTop.dataStart;
+}
+
+export function getStandardBatchSolveEdgeBottomPtr(): usize {
+  return standardBatchSolveEdgeBottom.dataStart;
 }
 
 function computeSetErrsFromBase(weightedPixelErrorBasePtr: usize): void {
@@ -715,6 +786,62 @@ function computeStandardNeighborPenalty(
   return CONTINUITY_PENALTY * (edgePenalty / 8.0) + repeatPenalty + modePenalty;
 }
 
+function standardBatchSolveCountIndex(batchIndex: i32, cellIndex: i32): i32 {
+  return batchIndex * CELL_COUNT + cellIndex;
+}
+
+function standardBatchSolveFlatIndex(batchIndex: i32, cellIndex: i32, candidateIndex: i32): i32 {
+  return batchIndex * STANDARD_SOLVE_CANDIDATE_COUNT + standardSolveFlatIndex(cellIndex, candidateIndex);
+}
+
+function computeStandardBatchNeighborPenalty(
+  firstFlatIndex: i32,
+  secondFlatIndex: i32,
+  boundaryCy: i32,
+  boundaryCx: i32,
+  horizontal: bool
+): f64 {
+  let edgePenalty = 0.0;
+  const firstEdgeOffset = standardSolveEdgeOffset(firstFlatIndex);
+  const secondEdgeOffset = standardSolveEdgeOffset(secondFlatIndex);
+  const boundaryBase = horizontal ? hBoundaryOffset(boundaryCy, boundaryCx) : vBoundaryOffset(boundaryCy, boundaryCx);
+  const boundaryMean = horizontal
+    ? <f64>standardSolveHBoundaryMeans[hBoundaryMeanOffset(boundaryCy, boundaryCx)]
+    : <f64>standardSolveVBoundaryMeans[vBoundaryMeanOffset(boundaryCy, boundaryCx)];
+
+  for (let i: i32 = 0; i < 8; i++) {
+    const firstColor = horizontal
+      ? <i32>standardBatchSolveEdgeRight[firstEdgeOffset + i]
+      : <i32>standardBatchSolveEdgeBottom[firstEdgeOffset + i];
+    const secondColor = horizontal
+      ? <i32>standardBatchSolveEdgeLeft[secondEdgeOffset + i]
+      : <i32>standardBatchSolveEdgeTop[secondEdgeOffset + i];
+    const rendered = <f64>pairDiff[firstColor * COLOR_COUNT + secondColor];
+    const desired = horizontal
+      ? <f64>standardSolveHBoundaryDiffs[boundaryBase + i]
+      : <f64>standardSolveVBoundaryDiffs[boundaryBase + i];
+    const delta = rendered - desired;
+    edgePenalty += delta * delta;
+  }
+
+  let repeatPenalty = 0.0;
+  const sameVariant = standardBatchSolveVariants[firstFlatIndex] == standardBatchSolveVariants[secondFlatIndex];
+  if (sameVariant && standardBatchSolveChars[firstFlatIndex] == standardBatchSolveChars[secondFlatIndex]) {
+    const scale = horizontal
+      ? (standardBatchSolveRepeatH[firstFlatIndex] + standardBatchSolveRepeatH[secondFlatIndex]) * 0.5
+      : (standardBatchSolveRepeatV[firstFlatIndex] + standardBatchSolveRepeatV[secondFlatIndex]) * 0.5;
+    repeatPenalty = REPEAT_PENALTY * scale;
+  }
+
+  let modePenalty = 0.0;
+  if (!sameVariant) {
+    const smoothness = Math.max(0.0, 1.0 - boundaryMean / MODE_SWITCH_DIFF_THRESHOLD);
+    modePenalty = MODE_SWITCH_PENALTY * smoothness;
+  }
+
+  return CONTINUITY_PENALTY * (edgePenalty / 8.0) + repeatPenalty + modePenalty;
+}
+
 function computeStandardCandidateCost(cellIndex: i32, candidateIndex: i32): f64 {
   const flatIndex = standardSolveFlatIndex(cellIndex, candidateIndex);
   const cx = cellIndex % GRID_WIDTH;
@@ -765,6 +892,56 @@ function computeStandardCandidateCost(cellIndex: i32, candidateIndex: i32): f64 
   return cost;
 }
 
+function computeStandardBatchCandidateCost(batchIndex: i32, cellIndex: i32, candidateIndex: i32): f64 {
+  const flatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, candidateIndex);
+  const cx = cellIndex % GRID_WIDTH;
+  const cy = cellIndex / GRID_WIDTH;
+  let cost = standardBatchSolveBaseErrors[flatIndex];
+
+  if (cx > 0) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex - 1];
+    cost += computeStandardBatchNeighborPenalty(
+      standardBatchSolveFlatIndex(batchIndex, cellIndex - 1, neighborIndex),
+      flatIndex,
+      cy,
+      cx - 1,
+      true
+    );
+  }
+  if (cx < GRID_WIDTH - 1) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex + 1];
+    cost += computeStandardBatchNeighborPenalty(
+      flatIndex,
+      standardBatchSolveFlatIndex(batchIndex, cellIndex + 1, neighborIndex),
+      cy,
+      cx,
+      true
+    );
+  }
+  if (cy > 0) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex - GRID_WIDTH];
+    cost += computeStandardBatchNeighborPenalty(
+      standardBatchSolveFlatIndex(batchIndex, cellIndex - GRID_WIDTH, neighborIndex),
+      flatIndex,
+      cy - 1,
+      cx,
+      false
+    );
+  }
+  if (cy < GRID_HEIGHT - 1) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex + GRID_WIDTH];
+    cost += computeStandardBatchNeighborPenalty(
+      flatIndex,
+      standardBatchSolveFlatIndex(batchIndex, cellIndex + GRID_WIDTH, neighborIndex),
+      cy,
+      cx,
+      false
+    );
+  }
+
+  return cost;
+}
+
 function countMaskBits(mask: u32): i32 {
   return popcnt<u32>(mask);
 }
@@ -789,6 +966,39 @@ function buildStandardNeighborCoherenceMask(cellIndex: i32): u32 {
   if (cy < GRID_HEIGHT - 1) {
     const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex + GRID_WIDTH];
     mask |= <u32>standardSolveCoherenceColorMasks[standardSolveFlatIndex(cellIndex + GRID_WIDTH, neighborIndex)];
+  }
+
+  return mask;
+}
+
+function buildStandardBatchNeighborCoherenceMask(batchIndex: i32, cellIndex: i32): u32 {
+  const cx = cellIndex % GRID_WIDTH;
+  const cy = cellIndex / GRID_WIDTH;
+  let mask: u32 = 0;
+
+  if (cx > 0) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex - 1];
+    mask |= <u32>standardBatchSolveCoherenceColorMasks[
+      standardBatchSolveFlatIndex(batchIndex, cellIndex - 1, neighborIndex)
+    ];
+  }
+  if (cx < GRID_WIDTH - 1) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex + 1];
+    mask |= <u32>standardBatchSolveCoherenceColorMasks[
+      standardBatchSolveFlatIndex(batchIndex, cellIndex + 1, neighborIndex)
+    ];
+  }
+  if (cy > 0) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex - GRID_WIDTH];
+    mask |= <u32>standardBatchSolveCoherenceColorMasks[
+      standardBatchSolveFlatIndex(batchIndex, cellIndex - GRID_WIDTH, neighborIndex)
+    ];
+  }
+  if (cy < GRID_HEIGHT - 1) {
+    const neighborIndex = <i32>standardSolveSelectedIndices[cellIndex + GRID_WIDTH];
+    mask |= <u32>standardBatchSolveCoherenceColorMasks[
+      standardBatchSolveFlatIndex(batchIndex, cellIndex + GRID_WIDTH, neighborIndex)
+    ];
   }
 
   return mask;
@@ -859,6 +1069,51 @@ function runStandardColorCoherencePass(passCount: i32): void {
   }
 }
 
+function runStandardBatchColorCoherencePass(batchIndex: i32, passCount: i32): void {
+  for (let pass: i32 = 0; pass < passCount; pass++) {
+    for (let cellIndex: i32 = 0; cellIndex < CELL_COUNT; cellIndex++) {
+      const neighborMask = buildStandardBatchNeighborCoherenceMask(batchIndex, cellIndex);
+      if (neighborMask == 0) continue;
+
+      const currentIndex = <i32>standardSolveSelectedIndices[cellIndex];
+      const currentFlatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, currentIndex);
+      const currentMask = <u32>standardBatchSolveCoherenceColorMasks[currentFlatIndex];
+      const currentMissing = countMaskBits(currentMask & <u32>~neighborMask);
+      if (currentMissing == 0) continue;
+
+      const currentCost = computeStandardBatchCandidateCost(batchIndex, cellIndex, currentIndex);
+      let bestIndex = currentIndex;
+      let bestCost = currentCost;
+      let bestMissing = currentMissing;
+      const count = <i32>standardBatchSolveCounts[standardBatchSolveCountIndex(batchIndex, cellIndex)];
+
+      for (let candidateIndex: i32 = 0; candidateIndex < count; candidateIndex++) {
+        if (candidateIndex == currentIndex) continue;
+        const flatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, candidateIndex);
+        const candidateMask = <u32>standardBatchSolveCoherenceColorMasks[flatIndex];
+        if ((candidateMask & neighborMask) == 0) continue;
+
+        const candidateMissing = countMaskBits(candidateMask & <u32>~neighborMask);
+        if (candidateMissing >= bestMissing) continue;
+
+        const cost = computeStandardBatchCandidateCost(batchIndex, cellIndex, candidateIndex);
+        if (
+          cost <= currentCost + COLOR_COHERENCE_MAX_DELTA &&
+          (candidateMissing < bestMissing || cost < bestCost)
+        ) {
+          bestIndex = candidateIndex;
+          bestCost = cost;
+          bestMissing = candidateMissing;
+        }
+      }
+
+      if (bestIndex != currentIndex) {
+        standardSolveSelectedIndices[cellIndex] = <u8>bestIndex;
+      }
+    }
+  }
+}
+
 function runStandardEdgeContinuityPass(passCount: i32): void {
   for (let pass: i32 = 0; pass < passCount; pass++) {
     for (let cellIndex: i32 = 0; cellIndex < CELL_COUNT; cellIndex++) {
@@ -890,6 +1145,54 @@ function runStandardEdgeContinuityPass(passCount: i32): void {
         if (candidateAlignment <= bestAlignment) continue;
 
         const candidateRawCost = computeStandardCandidateCost(cellIndex, candidateIndex);
+        if (candidateRawCost > currentRawCost + EDGE_CONTINUITY_MAX_DELTA) continue;
+
+        const candidateAdjustedCost = candidateRawCost - candidateAlignment;
+        if (candidateAdjustedCost < bestAdjustedCost) {
+          bestIndex = candidateIndex;
+          bestAlignment = candidateAlignment;
+          bestAdjustedCost = candidateAdjustedCost;
+        }
+      }
+
+      if (bestIndex != currentIndex) {
+        standardSolveSelectedIndices[cellIndex] = <u8>bestIndex;
+      }
+    }
+  }
+}
+
+function runStandardBatchEdgeContinuityPass(batchIndex: i32, passCount: i32): void {
+  for (let pass: i32 = 0; pass < passCount; pass++) {
+    for (let cellIndex: i32 = 0; cellIndex < CELL_COUNT; cellIndex++) {
+      const detailScore = <f64>standardCellDetailScores[cellIndex];
+      const cellDirection = standardCellGradientDirections[cellIndex];
+      const currentIndex = <i32>standardSolveSelectedIndices[cellIndex];
+      const currentFlatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, currentIndex);
+      const currentAlignment = computeStandardDirectionalAlignmentBonus(
+        detailScore,
+        cellDirection,
+        standardBatchSolveGlyphDirections[currentFlatIndex]
+      );
+      if (currentAlignment <= 0.0 && detailScore < EDGE_ALIGNMENT_DETAIL_THRESHOLD) continue;
+
+      const currentRawCost = computeStandardBatchCandidateCost(batchIndex, cellIndex, currentIndex);
+      let bestIndex = currentIndex;
+      let bestAlignment = currentAlignment;
+      let bestAdjustedCost = currentRawCost - currentAlignment;
+      const count = <i32>standardBatchSolveCounts[standardBatchSolveCountIndex(batchIndex, cellIndex)];
+
+      for (let candidateIndex: i32 = 0; candidateIndex < count; candidateIndex++) {
+        if (candidateIndex == currentIndex) continue;
+        const flatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, candidateIndex);
+        const candidateAlignment = computeStandardDirectionalAlignmentBonus(
+          detailScore,
+          cellDirection,
+          standardBatchSolveGlyphDirections[flatIndex]
+        );
+        if (candidateAlignment <= bestAlignment) continue;
+
+        const candidateRawCost = computeStandardBatchCandidateCost(batchIndex, cellIndex, candidateIndex);
         if (candidateRawCost > currentRawCost + EDGE_CONTINUITY_MAX_DELTA) continue;
 
         const candidateAdjustedCost = candidateRawCost - candidateAlignment;
@@ -1228,6 +1531,72 @@ export function computeStandardSolveSelection(passCount: i32): void {
   }
 }
 
+export function computeStandardBatchSolveSelection(batchIndex: i32, passCount: i32): void {
+  if (batchIndex < 0 || batchIndex >= STANDARD_SOLVE_BATCH_COUNT) {
+    return;
+  }
+
+  const verticalDebt = new Float32Array(GRID_WIDTH);
+
+  for (let cy: i32 = 0; cy < GRID_HEIGHT; cy++) {
+    let horizontalDebt = 0.0;
+    for (let cx: i32 = 0; cx < GRID_WIDTH; cx++) {
+      const cellIndex = cy * GRID_WIDTH + cx;
+      const count = <i32>standardBatchSolveCounts[standardBatchSolveCountIndex(batchIndex, cellIndex)];
+      let bestIndex = 0;
+      let bestCost = Infinity;
+
+      for (let candidateIndex: i32 = 0; candidateIndex < count; candidateIndex++) {
+        const flatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, candidateIndex);
+        const debtAfter = clampBrightnessDebt(horizontalDebt + verticalDebt[cx] + standardBatchSolveBrightnessResiduals[flatIndex]);
+        const cost = standardBatchSolveBaseErrors[flatIndex] + BRIGHTNESS_DEBT_WEIGHT * debtAfter * debtAfter;
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestIndex = candidateIndex;
+        }
+      }
+
+      standardSolveSelectedIndices[cellIndex] = <u8>bestIndex;
+      const chosenFlatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, bestIndex);
+      horizontalDebt = clampBrightnessDebt((horizontalDebt + standardBatchSolveBrightnessResiduals[chosenFlatIndex]) * BRIGHTNESS_DEBT_DECAY);
+      verticalDebt[cx] = <f32>clampBrightnessDebt(
+        (verticalDebt[cx] + standardBatchSolveBrightnessResiduals[chosenFlatIndex]) * BRIGHTNESS_DEBT_DECAY
+      );
+    }
+  }
+
+  for (let pass: i32 = 0; pass < passCount; pass++) {
+    const forward = (pass & 1) == 0;
+    let start = forward ? 0 : CELL_COUNT - 1;
+    let end = forward ? CELL_COUNT : -1;
+    let step = forward ? 1 : -1;
+    let changed = false;
+
+    for (let cellIndex = start; cellIndex != end; cellIndex += step) {
+      const count = <i32>standardBatchSolveCounts[standardBatchSolveCountIndex(batchIndex, cellIndex)];
+      let bestIndex = <i32>standardSolveSelectedIndices[cellIndex];
+      let bestCost = Infinity;
+
+      for (let candidateIndex: i32 = 0; candidateIndex < count; candidateIndex++) {
+        const cost = computeStandardBatchCandidateCost(batchIndex, cellIndex, candidateIndex);
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestIndex = candidateIndex;
+        }
+      }
+
+      if (bestIndex != <i32>standardSolveSelectedIndices[cellIndex]) {
+        standardSolveSelectedIndices[cellIndex] = <u8>bestIndex;
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      break;
+    }
+  }
+}
+
 export function computeStandardRefineSelection(
   colorPassCount: i32,
   edgePassCount: i32
@@ -1238,6 +1607,64 @@ export function computeStandardRefineSelection(
   if (edgePassCount > 0) {
     runStandardEdgeContinuityPass(edgePassCount);
   }
+}
+
+export function computeStandardBatchRefineSelection(
+  batchIndex: i32,
+  colorPassCount: i32,
+  edgePassCount: i32
+): void {
+  if (batchIndex < 0 || batchIndex >= STANDARD_SOLVE_BATCH_COUNT) {
+    return;
+  }
+  if (colorPassCount > 0) {
+    runStandardBatchColorCoherencePass(batchIndex, colorPassCount);
+  }
+  if (edgePassCount > 0) {
+    runStandardBatchEdgeContinuityPass(batchIndex, edgePassCount);
+  }
+}
+
+export function finalizeStandardBatchSolveSelection(batchIndex: i32): void {
+  if (batchIndex < 0 || batchIndex >= STANDARD_SOLVE_BATCH_COUNT) {
+    return;
+  }
+
+  let totalError = 0.0;
+
+  for (let cellIndex: i32 = 0; cellIndex < CELL_COUNT; cellIndex++) {
+    const candidateIndex = <i32>standardSolveSelectedIndices[cellIndex];
+    const flatIndex = standardBatchSolveFlatIndex(batchIndex, cellIndex, candidateIndex);
+    standardScreenCodes[cellIndex] = standardBatchSolveChars[flatIndex];
+    standardColors[cellIndex] = standardBatchSolveFgs[flatIndex];
+    standardBgIndices[cellIndex] = 0;
+    totalError += standardBatchSolveBaseErrors[flatIndex];
+
+    const cx = cellIndex % GRID_WIDTH;
+    const cy = cellIndex / GRID_WIDTH;
+    if (cx > 0) {
+      const leftIndex = <i32>standardSolveSelectedIndices[cellIndex - 1];
+      totalError += computeStandardBatchNeighborPenalty(
+        standardBatchSolveFlatIndex(batchIndex, cellIndex - 1, leftIndex),
+        flatIndex,
+        cy,
+        cx - 1,
+        true
+      );
+    }
+    if (cy > 0) {
+      const topIndex = <i32>standardSolveSelectedIndices[cellIndex - GRID_WIDTH];
+      totalError += computeStandardBatchNeighborPenalty(
+        standardBatchSolveFlatIndex(batchIndex, cellIndex - GRID_WIDTH, topIndex),
+        flatIndex,
+        cy - 1,
+        cx,
+        false
+      );
+    }
+  }
+
+  standardSolveTotalError[0] = totalError;
 }
 
 export function finalizeStandardSolveSelection(): void {

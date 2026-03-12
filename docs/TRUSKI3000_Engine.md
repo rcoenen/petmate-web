@@ -12,7 +12,7 @@ The result is an engine that treats bitmap-to-PETSCII conversion as a serious op
 
 1. **Preprocessing** — Source image is converted to OKLAB color space and divided into 8×8 cell regions. Per-cell statistics are computed: mean luminance, variance, gradient direction, detail score (via Laplacian), and a perceptual saliency mask that tells the engine where the eye will look hardest.
 
-2. **CODEX: Selected Legal Mode Setup** — The converter executes the explicitly requested VIC-II mode as one legal full-screen PETSCII output. Standard, ECM, and MCM are alternative full-screen solves; cross-mode mixing is out of scope for final export. CODEX: If a caller explicitly asks for multiple modes, they are rendered independently rather than auto-ranked or auto-selected.
+2. **Selected Legal Mode Setup** — The converter executes the explicitly requested VIC-II mode as one legal full-screen PETSCII output. Standard, ECM, and MCM are alternative full-screen solves, and cross-mode mixing is out of scope for final export. If multiple modes are requested for comparison, each mode is rendered independently rather than auto-ranked or auto-selected.
 
 3. **Palette Solving** — Colodore's measured C64 palette is loaded and converted to OKLAB (Colodore models the full PAL analog signal chain including VIC-II luma levels, making it the most accurate reference available; Pepto's palette is supported as a fallback). For ECM, the four global background registers are solved via weighted k-means driven by the saliency map. For MCM, the shared color register is solved similarly. A full 16×16 perceptual distance lookup table is precomputed for use throughout matching.
 
@@ -63,13 +63,13 @@ MCM doubles the color depth at the cost of horizontal resolution. Pixels are gro
 
 The 2bpp encoding means each pair of bits in the glyph bitmap selects one of the four available colors: `00` = background, `01` = shared extra color, `10` = screen RAM color, `11` = color RAM color. This gives much richer color per cell but the halved horizontal resolution makes fine detail mushy. MCM is the go-to for photographic or painterly content where color fidelity matters more than edge sharpness.
 
-CODEX: Within a legal MCM screen, per-cell hires-versus-multicolor behavior is still a valid standard C64 technique: when the screen is globally in MCM and bit 3 of color RAM is clear for a cell, the VIC-II renders that cell in hires mode (2 colors, full 8x8 resolution) even though the screen remains an MCM screen. CODEX: The tradeoff is that hires-like MCM cells keep full horizontal resolution but their foreground color is restricted to palette entries 0-7 because only color RAM bits 0-2 are available. This is not cross-mode mixing; it is part of how MCM works.
+Within a legal MCM screen, per-cell hires-versus-multicolor behavior is still a valid standard C64 technique: when the screen is globally in MCM and bit 3 of color RAM is clear for a cell, the VIC-II renders that cell in hires mode (2 colors, full 8x8 resolution) even though the screen remains an MCM screen. The tradeoff is that hires-like MCM cells keep full horizontal resolution but their foreground color is restricted to palette entries 0-7 because only color RAM bits 0-2 are available. This is not cross-mode mixing; it is part of how MCM works.
 
 ### Why Mode Choice Matters for Conversion
 
-CODEX: No single mode is optimal for all images. A portrait might score best in MCM because color richness matters more than fine detail. A line-art drawing might score best in Standard mode. A landscape with a few dominant background tones might score best in ECM.
+No single mode is optimal for all images. A portrait might score best in MCM because color richness matters more than fine detail. A line-art drawing might score best in Standard mode. A landscape with a few dominant background tones might score best in ECM.
 
-CODEX: TRUSKI3000 treats Standard, ECM, and MCM as alternative legal full-screen outputs. The user chooses which mode to render. If the editor wants to compare multiple modes, it must request and render those modes explicitly.
+TRUSKI3000 treats Standard, ECM, and MCM as alternative legal full-screen outputs. The user chooses which mode to render. If the editor wants to compare multiple modes, it must request and render those modes explicitly.
 
 ---
 
@@ -86,7 +86,7 @@ Before any character matching happens, the source bitmap goes through perceptual
 
 ## 2. Mode Support Layer
 
-CODEX: TRUSKI3000 treats the three modes as alternative full-screen legal outputs and never mixes Standard/ECM/MCM within one final export.
+TRUSKI3000 treats the three modes as alternative full-screen legal outputs and never mixes Standard, ECM, and MCM within one final export.
 
 ### Standard Mode
 
@@ -110,7 +110,7 @@ CODEX: TRUSKI3000 treats the three modes as alternative full-screen legal output
 
 ### User-Selected Mode Execution
 
-CODEX: The engine solves the legal full-screen mode the user explicitly requested. If multiple modes are requested for comparison, each mode is solved independently. CODEX: Within a chosen MCM screen, legal per-cell hires-versus-multicolor behavior may still be evaluated as part of the solver, but Standard/ECM/MCM are not mixed inside one export.
+The engine solves the legal full-screen mode the user explicitly requested. If multiple modes are requested for comparison, each mode is solved independently. Within a chosen MCM screen, legal per-cell hires-versus-multicolor behavior may still be evaluated as part of the solver, but Standard, ECM, and MCM are not mixed inside one export.
 
 ---
 
@@ -227,8 +227,8 @@ After initial matching, the assigned background colors may not optimally use all
 ## 7. Output Layer
 
 - **Screen data**: raw PETSCII screen RAM + color RAM bytes — valid for direct loading onto real hardware or emulator
-- **CODEX: Preview**: PNG rendered using actual VIC-II character ROM bitmaps and displayed at a 4:3 presentation aspect rather than as raw 320x200 square pixels
-- **CODEX: Metadata**: chosen screen mode, per-cell color assignments, and error scores — useful for debugging and iterative tuning
+- **Preview**: PNG rendered using actual VIC-II character ROM bitmaps and displayed at a 4:3 presentation aspect rather than as raw 320x200 square pixels
+- **Metadata**: chosen screen mode, per-cell color assignments, and error scores — useful for debugging and iterative tuning
 - **Quality metrics**: a suite of perceptual measurements comparing rendered output against the source, all computed in OkLab color space
 
 ### Quality Metrics Suite
